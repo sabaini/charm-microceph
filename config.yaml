@@ -1,0 +1,10 @@
+options:
+  snap-channel:
+    default: "latest/stable"
+    type: string
+  osd-devices:
+    type: string
+    description: |
+      The devices to setup OSD volumes.
+      For multiple devices, a space delimited list can be
+      provided.
