@@ -91,7 +91,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
-        self.add_disks_to_node(event)
+        if self.peers.interface.state.joined:
+            self.add_disks_to_node(event)
 
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
         """Relation handlers for the service."""
