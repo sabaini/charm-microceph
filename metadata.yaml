@@ -15,6 +15,10 @@ tags:
   - storage
   - misc
 
+provides:
+  ceph:
+    interface: ceph-client
+
 peers:
   peers:
     interface: ceph-peer

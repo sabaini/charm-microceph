@@ -19,12 +19,17 @@
 
 This charm deploys and manages microceph.
 """
+import json
 import logging
+from typing import Callable
 
 from ops.charm import CharmBase, RelationEvent
-from ops.framework import EventBase, EventSource, ObjectEvents
+from ops.framework import EventBase, EventSource, Object, ObjectEvents, StoredState
 from ops_sunbeam.interfaces import OperatorPeers
-from ops_sunbeam.relation_handlers import BasePeerHandler
+from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
+
+from ceph_broker import is_leader as is_ceph_mon_leader
+from ceph_broker import process_requests
 
 logger = logging.getLogger(__name__)
 
@@ -170,3 +175,235 @@ class MicroClusterPeerHandler(BasePeerHandler):
             return
 
         self.callback_f(event)
+
+
+class ProcessBrokerRequestEvent(EventBase):
+    """Event to process a ceph broker request."""
+
+    def __init__(
+        self,
+        handle,
+        relation_id,
+        relation_name,
+        broker_req_id,
+        broker_req,
+        client_app_name,
+        client_unit_name,
+    ):
+        super().__init__(handle)
+        self.relation_id = relation_id
+        self.relation_name = relation_name
+        self.broker_req_id = broker_req_id
+        self.broker_req = broker_req
+        self.client_app_name = client_app_name
+        self.client_unit_name = client_unit_name
+
+    def snapshot(self):
+        """Snapshot the event data."""
+        return {
+            "relation_id": self.relation_id,
+            "relation_name": self.relation_name,
+            "broker_req_id": self.broker_req_id,
+            "broker_req": self.broker_req,
+            "client_app_name": self.client_app_name,
+            "client_unit_name": self.client_unit_name,
+        }
+
+    def restore(self, snapshot):
+        """Restore the event data."""
+        super().restore(snapshot)
+        self.relation_id = snapshot["relation_id"]
+        self.relation_name = snapshot["relation_name"]
+        self.broker_req_id = snapshot["broker_req_id"]
+        self.broker_req = snapshot["broker_req"]
+        self.client_app_name = snapshot["client_app_name"]
+        self.client_unit_name = snapshot["client_unit_name"]
+
+
+class CephClientProviderEvents(ObjectEvents):
+    """Define all CephClient provider events."""
+
+    process_request = EventSource(ProcessBrokerRequestEvent)
+
+
+class CephClientProvides(Object):
+    """Interface for cephclient provider."""
+
+    on = CephClientProviderEvents()
+    _stored = StoredState()
+
+    def __init__(self, charm, relation_name="ceph"):
+        super().__init__(charm, relation_name)
+
+        self._stored.set_default(processed=[])
+        self.charm = charm
+        self.this_unit = self.model.unit
+        self.relation_name = relation_name
+        self.framework.observe(
+            charm.on[self.relation_name].relation_joined, self._on_relation_changed
+        )
+        self.framework.observe(
+            charm.on[self.relation_name].relation_changed, self._on_relation_changed
+        )
+
+    def _on_relation_changed(self, event):
+        """Prepare relation for data from requiring side."""
+        # send_osd_settings()
+        logger.info("_on_relation_changed event")
+
+        if not self.charm.ready_for_service():
+            logger.info("Not processing request as service is not yet ready")
+            return
+
+        self._handle_client_relation(event.relation, event.unit)
+
+    def _get_client_application_name(self, relation, unit):
+        """Retrieve client application name from relation data."""
+        return relation.data[unit].get("application-name", relation.app.name)
+
+    def _req_already_treated(self, request_id):
+        """Check if broker request already handled.
+
+        The local relation data holds all the broker request/responses that
+        are handled as a dictionary. There will be a single entry for each
+        unit that makes broker request in the form of broker-rsp-<unit name>:
+        {reqeust-id: <id>, ..}. Verify if request_id exists in the relation
+        data broker response for the requested unit.
+
+        :param request_id: Request ID
+        :type request_id: str
+        :returns: Whether request is already handled
+        :rtype: bool
+        """
+        return request_id in self._stored.processed
+
+    def _get_broker_req_id(self, request):
+        try:
+            if isinstance(request, str):
+                try:
+                    req_key = json.loads(request)["request-id"]
+                except (TypeError, json.decoder.JSONDecodeError):
+                    logger.warning(
+                        "Not able to decode request " "id for broker request {}".format(request)
+                    )
+                    req_key = None
+            else:
+                req_key = request["request-id"]
+        except KeyError:
+            logger.warning("Not able to decode request id for broker request {}".format(request))
+            req_key = None
+
+        return req_key
+
+    def _handle_client_relation(self, relation, unit):
+        """Handle broker request and set the relation data.
+
+        :param relation: Operator relation
+        :type relation: Relation
+        :param unit: Unit to handle
+        :type unit: Unit
+        """
+        logger.info(
+            "mon cluster in quorum and osds bootstrapped "
+            "- providing client with keys, processing broker requests"
+        )
+
+        settings = relation.data[unit]
+        if "broker_req" not in settings:
+            logger.warning(f"broker_req not in settings: {settings}")
+            return
+
+        broker_req_id = self._get_broker_req_id(settings["broker_req"])
+        if broker_req_id is None:
+            return
+
+        if not is_ceph_mon_leader():
+            logger.debug(f"Not leader - ignoring broker request {broker_req_id}")
+            return
+
+        # TOCHK: Do we need to update ceph key etc even in this case?
+        if self._req_already_treated(broker_req_id):
+            logger.debug(f"Ignoring already executed broker request {broker_req_id}")
+            return
+
+        client_app_name = self._get_client_application_name(relation, unit)
+        client_unit_name = settings.get("unit-name", unit.name).replace("/", "-")
+        self.on.process_request.emit(
+            relation.id,
+            relation.name,
+            broker_req_id,
+            settings["broker_req"],
+            client_app_name,
+            client_unit_name,
+        )
+
+    def set_broker_response(self, relation_id, relation_name, broker_req_id, response, ceph_info):
+        """Set broker response in unit data bag."""
+        data = {}
+
+        # ceph_info required: key, auth, ceph-public-address, rbd-features
+        data.update(ceph_info)
+
+        if response is not None:
+            # response should be in format {broker-rsp-<unit name>: rsp}
+            data.update(response)
+
+            processed = self._stored.processed
+            processed.append(broker_req_id)
+            self._stored.processed = processed
+
+        relation = None
+        for rel in self.framework.model.relations[relation_name]:
+            if rel.id == relation_id:
+                relation = rel
+
+        if not relation:
+            # Relation has disappeared so skip send of data
+            return
+
+        for k, v in data.items():
+            relation.data[self.this_unit][k] = str(v)
+
+
+class CephClientProviderHandler(RelationHandler):
+    """Handler for ceph client relation."""
+
+    def __init__(
+        self,
+        charm: CharmBase,
+        relation_name: str,
+        callback_f: Callable,
+    ):
+        super().__init__(charm, relation_name, callback_f)
+
+    def setup_event_handler(self) -> Object:
+        """Configure event handlers for an ceph-client interface."""
+        logger.debug("Setting up ceph-client event handler")
+
+        ceph = CephClientProvides(
+            self.charm,
+            self.relation_name,
+        )
+        self.framework.observe(ceph.on.process_request, self._on_process_request)
+        return ceph
+
+    @property
+    def ready(self) -> bool:
+        """Check if handler is ready."""
+        # TODO: True only when charm completes bootstrapping??
+        return True
+
+    def _on_process_request(self, event):
+        logger.info(f"Processing broker req {event.broker_req}")
+        broker_result = process_requests(event.broker_req)
+        logger.info(broker_result)
+        unit_response_key = "broker-rsp-" + event.client_unit_name
+        response = {unit_response_key: broker_result}
+        self.interface.set_broker_response(
+            event.relation_id,
+            event.relation_name,
+            event.broker_req_id,
+            response,
+            self.charm.get_ceph_info_from_configs(event.client_app_name),
+        )
+        # Ignore the callback function??

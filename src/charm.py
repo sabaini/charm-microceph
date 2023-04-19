@@ -28,9 +28,12 @@ from typing import List
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
+from netifaces import AF_INET, gateways, ifaddresses
 from ops.main import main
 
+from ceph_broker import get_named_key
 from relation_handlers import (
+    CephClientProviderHandler,
     MicroClusterNewNodeEvent,
     MicroClusterNodeAddedEvent,
     MicroClusterPeerHandler,
@@ -38,6 +41,22 @@ from relation_handlers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_local_ip_by_default_route() -> str:
+    """Get IP address of host associated with default gateway."""
+    interface = "lo"
+    ip = "127.0.0.1"
+
+    # TOCHK: Gathering only IPv4
+    if "default" in gateways():
+        interface = gateways()["default"][AF_INET][1]
+
+    ip_list = ifaddresses(interface)[AF_INET]
+    if len(ip_list) > 0 and "addr" in ip_list[0]:
+        ip = ip_list[0]["addr"]
+
+    return ip
 
 
 class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
@@ -65,6 +84,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
         logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
 
+        cmd = ["sudo", "snap", "alias", "microceph.ceph", "ceph"]
+        logger.debug(f'Running command {" ".join(cmd)}')
+        process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
+        logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
+
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
         self.add_disks_to_node(event)
@@ -80,9 +104,38 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 "peers" in self.mandatory_relations,
             )
             handlers.append(self.peers)
+        if self.can_add_handler("ceph", handlers):
+            self.ceph = CephClientProviderHandler(
+                self,
+                "ceph",
+                self.handle_ceph,
+            )
+            handlers.append(self.ceph)
 
         handlers = super().get_relation_handlers(handlers)
         return handlers
+
+    def ready_for_service(self) -> bool:
+        """Check if service is ready or not."""
+        # TODO(hemanth): check ceph quorum
+        if self.bootstrapped:
+            return True
+
+        return False
+
+    def get_ceph_info_from_configs(self, service_name) -> dict:
+        """Update ceph info from configuration."""
+        # public address should be updated once config public-network is supported
+        public_addr = _get_local_ip_by_default_route()
+        return {
+            "auth": "cephx",
+            "ceph-public-address": public_addr,
+            "key": get_named_key(service_name),
+        }
+
+    def handle_ceph(self, event) -> None:
+        """Callback for interface ceph."""
+        logger.info("Callback for ceph interface, ignore")
 
     def configure_app_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the leader unit."""

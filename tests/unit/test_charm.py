@@ -48,7 +48,7 @@ class TestCharm(test_utils.CharmTestCase):
         self.harness.update_config(
             {"snap-channel": "1.0/stable", "osd-devices": "/dev/sdb /dev/sdc"}
         )
-        test_utils.add_all_relations(self.harness)
+        test_utils.add_complete_peer_relation(self.harness)
         self.subprocess.run.assert_any_call(
             ["sudo", "microceph", "cluster", "bootstrap"],
             capture_output=True,
