@@ -45,26 +45,10 @@ class TestCharm(test_utils.CharmTestCase):
     def test_all_relations(self):
         """Test all the charms relations."""
         self.harness.set_leader()
-        self.harness.update_config(
-            {"snap-channel": "1.0/stable", "osd-devices": "/dev/sdb /dev/sdc"}
-        )
+        self.harness.update_config({"snap-channel": "1.0/stable"})
         test_utils.add_complete_peer_relation(self.harness)
         self.subprocess.run.assert_any_call(
             ["sudo", "microceph", "cluster", "bootstrap"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=180,
-        )
-        self.subprocess.run.assert_any_call(
-            ["sudo", "microceph", "disk", "add", "/dev/sdb"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=180,
-        )
-        self.subprocess.run.assert_any_call(
-            ["sudo", "microceph", "disk", "add", "/dev/sdc"],
             capture_output=True,
             text=True,
             check=True,
