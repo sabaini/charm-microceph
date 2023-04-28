@@ -1,0 +1,14 @@
+list-disks:
+  description: |
+    List both OSDs and unpartitioned disks on the
+    node.
+add-osd:
+  description: |
+    Add ceph disks (OSD) to cluster
+  params:
+    device-id:
+      type: string
+      description: |
+        Device ID of the disk. Accepts comma separated
+        device id's to specify multiple disks
+  additionalProperties: false

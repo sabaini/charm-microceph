@@ -21,6 +21,7 @@ This charm deploys and manages microceph.
 """
 import json
 import logging
+import re
 import subprocess
 from socket import gethostname
 from typing import List
@@ -29,6 +30,7 @@ import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
 from netifaces import AF_INET, gateways, ifaddresses
+from ops.charm import ActionEvent
 from ops.main import main
 
 from ceph_broker import get_named_key
@@ -69,6 +71,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Run constructor."""
         super().__init__(framework)
         self.framework.observe(self.on.install, self._on_install)
+        self.framework.observe(self.on.list_disks_action, self._list_disks_action)
+        self.framework.observe(self.on.add_osd_action, self._add_osd_action)
 
     def _on_install(self, event: ops.framework.EventBase) -> None:
         config = self.model.config.get
@@ -91,8 +95,94 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
-        if self.peers.interface.state.joined:
-            self.add_disks_to_node(event)
+
+    def _list_disks_action(self, event: ActionEvent):
+        """Run list-disks action."""
+        # TOCHK: Replace microceph commands with microceph daemon API calls
+        cmd = ["sudo", "microceph", "disk", "list"]
+        try:
+            logger.debug(f'Running command {" ".join(cmd)}')
+            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
+            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning(e.stderr)
+            event.fail(e.stderr)
+            return
+
+        disks = self._handle_disk_list_output(process.stdout)
+        event.set_results(disks)
+
+    def _add_osd_action(self, event: ActionEvent):
+        """Add OSD disk to microceph."""
+        if not self.peers.interface.state.joined:
+            event.fail("Node not yet joined in microceph cluster")
+            return
+
+        device_ids = event.params.get("device-id").split(",")
+        for device_id in device_ids:
+            cmd = ["sudo", "microceph", "disk", "add", device_id]
+            try:
+                logger.debug(f'Running command {" ".join(cmd)}')
+                process = subprocess.run(
+                    cmd, capture_output=True, text=True, check=True, timeout=180
+                )
+                logger.debug(
+                    f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}"
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                logger.warning(e.stderr)
+                error_disk_already_exists = (
+                    "Failed adding new disk: Failed to record disk: Failed to create "
+                    '"disks" entry: UNIQUE constraint failed: disks.member_id, disks.path'
+                )
+                if error_disk_already_exists not in e.stderr:
+                    event.fail(e.stderr)
+                    return
+
+        event.set_results({"status": "success"})
+
+    def _handle_disk_list_output(self, output: str) -> dict:
+        # Do not use _ for keys that need to set in action result, instead use -.
+        disks = {"osds": [], "unpartitioned-disks": []}
+
+        # Used in each matched regex: \w, space, -, backslash
+        osds_re = r"\n\|([\w -]+)\|([\w -]+)\|([\w -\/]+)\|\n"
+        osds = re.findall(osds_re, output)
+
+        # Used in each matched regex: \w, space, -, backslash, dot
+        unpartitioned_disks_re = r"\n\|([\w -]+)\|([\w -\.]+)\|([\w -]+)\|([\w -\/]+)\|\n"
+        unpartitioned_disks = re.findall(unpartitioned_disks_re, output)
+
+        for osd in osds:
+            # Skip the header
+            if "OSD" in osd[0] and "LOCATION" in osd[1] and "PATH" in osd[2]:
+                continue
+
+            disks["osds"].append(
+                {"osd": osd[0].strip(), "location": osd[1].strip(), "path": osd[2].strip()}
+            )
+
+        for disk in unpartitioned_disks:
+            # Skip the header
+            if (
+                "MODEL" in disk[0]
+                and "CAPACITY" in disk[1]
+                and "TYPE" in disk[2]
+                and "PATH" in disk[3]
+            ):
+                continue
+
+            # keys are in sync with what is returned by microceph daemon API call /1.0/resources
+            disks["unpartitioned-disks"].append(
+                {
+                    "model": disk[0].strip(),
+                    "size": disk[1].strip(),
+                    "type": disk[2].strip(),
+                    "path": disk[3].strip(),
+                }
+            )
+
+        return disks
 
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
         """Relation handlers for the service."""
@@ -142,7 +232,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Configure the leader unit."""
         if not self.is_leader_ready():
             self.bootstrap_cluster(event)
-            self.add_disks_to_node(event)
+            # mark bootstrap node also as joined
+            self.peers.interface.state.joined = True
 
         self.set_leader_ready()
 
@@ -156,7 +247,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         super().configure_app_non_leader(event)
         if isinstance(event, MicroClusterNodeAddedEvent):
             self.join_node_to_cluster(event)
-            self.add_disks_to_node(event)
 
     def bootstrap_cluster(self, event: ops.framework.EventBase) -> None:
         """Bootstrap microceph cluster."""
@@ -209,32 +299,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             raise e
-
-    def add_disk_to_node(self, disk):
-        """Add disk to microcpeh node."""
-        cmd = ["sudo", "microceph", "disk", "add", disk]
-        try:
-            logger.debug(f'Running command {" ".join(cmd)}')
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
-            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
-            error_disk_already_exists = (
-                "Failed adding new disk: Failed to record disk: Failed to create "
-                '"disks" entry: UNIQUE constraint failed: disks.member_id, disks.path'
-            )
-            if error_disk_already_exists not in e.stderr:
-                raise e
-
-    def add_disks_to_node(self, event: ops.framework.EventBase) -> None:
-        """Add disks to microcrph node."""
-        devices = self.model.config.get("osd-devices")
-        if not devices:
-            return
-
-        disks = devices.split()
-        for disk in disks:
-            self.add_disk_to_node(disk)
 
     def remove_node_from_cluster(self, event: ops.framework.EventBase) -> None:
         """Remove node from microceph cluster."""
