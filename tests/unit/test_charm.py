@@ -14,6 +14,8 @@
 
 """Tests for Openstack hypervisor charm."""
 
+from unittest.mock import MagicMock, PropertyMock
+
 import ops_sunbeam.test_utils as test_utils
 
 import charm
@@ -54,3 +56,159 @@ class TestCharm(test_utils.CharmTestCase):
             check=True,
             timeout=180,
         )
+
+    def test_add_osds_action(self):
+        """Test action add_osds."""
+        test_utils.add_complete_peer_relation(self.harness)
+        self.harness._charm.peers.interface.state.joined = True
+
+        action_event = MagicMock()
+        action_event.params = {"device-id": "/dev/sdb"}
+        self.harness.charm._add_osd_action(action_event)
+
+        action_event.set_results.assert_called()
+        action_event.fail.assert_not_called()
+
+    def test_add_osds_action_node_not_bootstrapped(self):
+        """Test action add_osds when node not bootstrapped."""
+        test_utils.add_complete_peer_relation(self.harness)
+
+        action_event = MagicMock()
+        action_event.params = {"device-id": "/dev/sdb"}
+        self.harness.charm._add_osd_action(action_event)
+
+        action_event.set_results.assert_not_called()
+        action_event.fail.assert_called()
+
+    def _create_subprocess_output_mock(self, stdout):
+        _mock = MagicMock()
+        self.subprocess.run.return_value = _mock
+        type(_mock).stdout = PropertyMock(return_value=stdout)
+        return _mock
+
+    def _test_list_disks_action(self, microceph_cmd_output, expected_disks):
+        """Test action list_disks."""
+        test_utils.add_complete_peer_relation(self.harness)
+        self.harness._charm.peers.interface.state.joined = True
+
+        action_event = MagicMock()
+        self._create_subprocess_output_mock(microceph_cmd_output)
+
+        self.harness.charm._list_disks_action(action_event)
+        action_event.set_results.assert_called_with(expected_disks)
+
+    def test_list_disks_action_node_not_bootstrapped(self):
+        """Test action list_disks when node not bootstrapped."""
+        test_utils.add_complete_peer_relation(self.harness)
+
+        action_event = MagicMock()
+        self.harness.charm._list_disks_action(action_event)
+        action_event.set_results.assert_not_called()
+        action_event.fail.assert_called()
+
+    def test_list_disks_action_no_osds_no_disks(self):
+        microceph_cmd_output = """
+Disks configured in MicroCeph:
++-----+----------+------+
+| OSD | LOCATION | PATH |
++-----+----------+------+
+
+Available unpartitioned disks on this system:
++-------+----------+------+------+
+| MODEL | CAPACITY | TYPE | PATH |
++-------+----------+------+------+
+        """
+
+        expected_disks = {"osds": [], "unpartitioned-disks": []}
+        self._test_list_disks_action(microceph_cmd_output, expected_disks)
+
+    def test_list_disks_action_no_osds_1_disk(self):
+        microceph_cmd_output = """
+        Disks configured in MicroCeph:
++-----+----------+------+
+| OSD | LOCATION | PATH |
++-----+----------+------+
+
+Available unpartitioned disks on this system:
++---------------+----------+------+-----------------------------------------------------+
+|     MODEL     | CAPACITY | TYPE |                        PATH                         |
++---------------+----------+------+-----------------------------------------------------+
+| QEMU HARDDISK | 1.00GiB  | scsi | /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1 |
++---------------+----------+------+-----------------------------------------------------+
+        """
+
+        expected_disks = {
+            "osds": [],
+            "unpartitioned-disks": [
+                {
+                    "model": "QEMU HARDDISK",
+                    "size": "1.00GiB",
+                    "type": "scsi",
+                    "path": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1",
+                }
+            ],
+        }
+        self._test_list_disks_action(microceph_cmd_output, expected_disks)
+
+    def test_list_disks_action_1_osd_no_disks(self):
+        microceph_cmd_output = """
+Disks configured in MicroCeph:
++-----+-------------+-----------------------------------------------------+
+| OSD |  LOCATION   |                        PATH                         |
++-----+-------------+-----------------------------------------------------+
+| 0   | microceph-1 | /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1 |
++-----+-------------+-----------------------------------------------------+
+
+Available unpartitioned disks on this system:
++-------+----------+------+------+
+| MODEL | CAPACITY | TYPE | PATH |
++-------+----------+------+------+
+        """
+
+        expected_disks = {
+            "osds": [
+                {
+                    "osd": "0",
+                    "location": "microceph-1",
+                    "path": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1",
+                }
+            ],
+            "unpartitioned-disks": [],
+        }
+        self._test_list_disks_action(microceph_cmd_output, expected_disks)
+
+    def test_list_disks_action_1_osd_1_disk(self):
+        microceph_cmd_output = """
+Disks configured in MicroCeph:
++-----+-------------+-----------------------------------------------------+
+| OSD |  LOCATION   |                        PATH                         |
++-----+-------------+-----------------------------------------------------+
+| 0   | microceph-1 | /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1 |
++-----+-------------+-----------------------------------------------------+
+
+Available unpartitioned disks on this system:
++---------------+----------+------+-----------------------------------------------------+
+|     MODEL     | CAPACITY | TYPE |                        PATH                         |
++---------------+----------+------+-----------------------------------------------------+
+| QEMU HARDDISK | 1.00GiB  | scsi | /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--2 |
++---------------+----------+------+-----------------------------------------------------+
+        """
+
+        expected_disks = {
+            "osds": [
+                {
+                    "osd": "0",
+                    "location": "microceph-1",
+                    "path": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1",
+                }
+            ],
+            "unpartitioned-disks": [
+                {
+                    "model": "QEMU HARDDISK",
+                    "size": "1.00GiB",
+                    "type": "scsi",
+                    "path": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--2",
+                }
+            ],
+        }
+        self._test_list_disks_action(microceph_cmd_output, expected_disks)

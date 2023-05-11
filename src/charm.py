@@ -98,6 +98,10 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def _list_disks_action(self, event: ActionEvent):
         """Run list-disks action."""
+        if not self.peers.interface.state.joined:
+            event.fail("Node not yet joined in microceph cluster")
+            return
+
         # TOCHK: Replace microceph commands with microceph daemon API calls
         cmd = ["sudo", "microceph", "disk", "list"]
         try:
@@ -110,6 +114,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             return
 
         disks = self._handle_disk_list_output(process.stdout)
+        print(disks)
         event.set_results(disks)
 
     def _add_osd_action(self, event: ActionEvent):
