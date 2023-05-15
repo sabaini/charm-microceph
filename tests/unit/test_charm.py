@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Openstack hypervisor charm."""
+"""Tests for Microceph charm."""
 
 import ops_sunbeam.test_utils as test_utils
 
