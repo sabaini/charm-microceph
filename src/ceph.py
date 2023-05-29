@@ -795,3 +795,10 @@ class ReplicatedPool(BasePool):
         update_pool(client=self.service, pool=self.name, settings={"size": str(self.replicas)})
         # Perform other common post pool creation tasks
         super(ReplicatedPool, self)._post_create()
+
+    def update(self):
+        """Update properties for an already existing pool."""
+        # Set the pool replica size
+        update_pool(client=self.service, pool=self.name, settings={"size": str(self.replicas)})
+        # Perform other common post pool creation tasks
+        super(ReplicatedPool, self).update()
