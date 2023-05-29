@@ -202,7 +202,11 @@ def update_pool(client, pool, settings):
     """
     cmd = ["ceph", "--id", client, "osd", "pool", "set", pool]
     for k, v in settings.items():
-        check_call(cmd + [k, v])
+        # Add --yes-i-really-mean-it flag if setting pool size 1
+        extend_cmd = [k, v]
+        if k == "size" and v == "1":
+            extend_cmd = extend_cmd + ["--yes-i-really-mean-it"]
+        check_call(cmd + extend_cmd)
 
 
 def set_app_name_for_pool(client, pool, name):
