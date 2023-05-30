@@ -261,7 +261,7 @@ class CephClientProvides(Object):
         """Retrieve client application name from relation data."""
         return relation.data[unit].get("application-name", relation.app.name)
 
-    def _req_already_treated(self, request_id):
+    def _req_already_treated(self, request_id, relation, req_unit):
         """Check if broker request already handled.
 
         The local relation data holds all the broker request/responses that
@@ -272,10 +272,29 @@ class CephClientProvides(Object):
 
         :param request_id: Request ID
         :type request_id: str
+        :param relation: Operator relation
+        :type relation: Relation
+        :param unit: Unit to handle
+        :type unit: Unit
         :returns: Whether request is already handled
         :rtype: bool
         """
-        return request_id in self._stored.processed
+        status = relation.data[req_unit]
+        client_unit_name = status.get("unit-name", req_unit.name)
+        response_key = "broker-rsp-" + client_unit_name.replace("/", "-")
+        if not status.get(response_key):
+            return False
+
+        if isinstance(status[response_key], str):
+            try:
+                data = json.loads(status[response_key])
+            except (TypeError, json.decoder.JSONDecodeError):
+                logging.debug(f"Not able to decode broker response {req_unit}")
+                return False
+        else:
+            data = status[response_key]
+
+        return data.get("request-id") == request_id
 
     def _get_broker_req_id(self, request):
         try:
@@ -321,9 +340,8 @@ class CephClientProvides(Object):
             logger.debug(f"Not leader - ignoring broker request {broker_req_id}")
             return
 
-        # TOCHK: Do we need to update ceph key etc even in this case?
-        if self._req_already_treated(broker_req_id):
-            logger.debug(f"Ignoring already executed broker request {broker_req_id}")
+        if self._req_already_treated(broker_req_id, relation, unit):
+            logger.info(f"Ignoring already executed broker request {broker_req_id}")
             return
 
         client_app_name = self._get_client_application_name(relation, unit)
