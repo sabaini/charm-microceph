@@ -720,7 +720,7 @@ class ReplicatedPool(BasePool):
         percent_data=None,
         app_name=None,
         op=None,
-        profile_name="replicated_rule",
+        profile_name=None,
     ):
         """Initialize ReplicatedPool object.
 
@@ -748,7 +748,6 @@ class ReplicatedPool(BasePool):
         super(ReplicatedPool, self).__init__(
             service=service, name=name, percent_data=percent_data, app_name=app_name, op=op
         )
-
         if op:
             # When initializing from op `replicas` is a required attribute, and
             # we will fail with KeyError if it is not provided.
@@ -758,15 +757,9 @@ class ReplicatedPool(BasePool):
         else:
             self.replicas = replicas or 2
             self.pg_num = pg_num
-            self.profile_name = profile_name or "replicated_rule"
+            self.profile_name = profile_name
 
     def _create(self):
-        # Validate if crush profile exists
-        if self.profile_name is None:
-            msg = "Failed to discover crush profile named " "{}".format(self.profile_name)
-            log(msg, level=ERROR)
-            raise PoolCreationError(msg)
-
         # Do extra validation on pg_num with data from live cluster
         if self.pg_num:
             # Since the number of placement groups were specified, ensure
@@ -786,8 +779,9 @@ class ReplicatedPool(BasePool):
             "--pg-num-min={}".format(min(AUTOSCALER_DEFAULT_PGS, self.pg_num)),
             self.name,
             str(self.pg_num),
-            self.profile_name,
         ]
+        if self.profile_name:
+            cmd.append(self.profile_name)
         check_call(cmd)
 
     def _post_create(self):
