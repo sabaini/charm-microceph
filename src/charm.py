@@ -26,13 +26,13 @@ import subprocess
 from socket import gethostname
 from typing import List
 
+import charms.operator_libs_linux.v2.snap as snap
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
 from netifaces import AF_INET, gateways, ifaddresses
 from ops.charm import ActionEvent
 from ops.main import main
-import charms.operator_libs_linux.v2.snap as snap
 
 import microceph
 from ceph_broker import get_named_key
@@ -96,9 +96,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
 
         try:
-            snap.SnapCache()['microceph'].hold()
-        except Exception as exc:
-            logger.exception('Failed to hold microceph refresh: ')
+            snap.SnapCache()["microceph"].hold()
+        except Exception:
+            logger.exception("Failed to hold microceph refresh: ")
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
