@@ -26,6 +26,7 @@ import subprocess
 from socket import gethostname
 from typing import List
 
+import charms.operator_libs_linux.v2.snap as snap
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
@@ -93,6 +94,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         logger.debug(f'Running command {" ".join(cmd)}')
         process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
         logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
+
+        try:
+            snap.SnapCache()["microceph"].hold()
+        except Exception:
+            logger.exception("Failed to hold microceph refresh: ")
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
