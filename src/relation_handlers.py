@@ -425,3 +425,26 @@ class CephClientProviderHandler(RelationHandler):
             self.charm.get_ceph_info_from_configs(event.client_app_name),
         )
         # Ignore the callback function??
+
+
+class CephRadosGWProviderHandler(RelationHandler):
+    "Handler for the RadosGW relation."
+
+    def __init__(
+        self,
+        charm: CharmBase,
+        relation_name: str,
+        callback_f: Callablem
+    ):
+        super().__init__(charm, relation_name, callback_f)
+
+    def setup_event_handler(self):
+        logger.debug("Setting up radosgw event handler")
+        rgw = CephRadosGWProvides(
+            self.charm,
+            self.relation_name,
+        )
+
+    @property
+    def ready(self):
+        return True
