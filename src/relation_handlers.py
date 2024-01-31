@@ -411,40 +411,69 @@ class CephClientProviderHandler(RelationHandler):
         # TODO: True only when charm completes bootstrapping??
         return True
 
+    def update_broker_data(self, data, event):
+        pass
+
+    def get_key_params(self, event):
+        return event.client_app_name, None
+
     def _on_process_request(self, event):
         logger.info(f"Processing broker req {event.broker_req}")
         broker_result = process_requests(event.broker_req)
         logger.info(broker_result)
         unit_response_key = "broker-rsp-" + event.client_unit_name
         response = {unit_response_key: broker_result}
+        data = self.charm.get_ceph_info_from_configs(
+            *self.get_key_params(event)
+        )
+        self.update_broker_data(data, event)
+
         self.interface.set_broker_response(
             event.relation_id,
             event.relation_name,
             event.broker_req_id,
             response,
-            self.charm.get_ceph_info_from_configs(event.client_app_name),
+            data,
         )
         # Ignore the callback function??
 
 
-class CephRadosGWProviderHandler(RelationHandler):
-    "Handler for the RadosGW relation."
+class CephRadosGWProviderHandler(CephClientProviderHandler):
+    """Handler for the radosgw relation."""
 
-    def __init__(
-        self,
-        charm: CharmBase,
-        relation_name: str,
-        callback_f: Callablem
-    ):
-        super().__init__(charm, relation_name, callback_f)
+    def __init__(self, charm, callback_f):
+        super().__init__(charm, "radosgw", callback_f)
+        self.key_name = ''
 
-    def setup_event_handler(self):
-        logger.debug("Setting up radosgw event handler")
-        rgw = CephRadosGWProvides(
-            self.charm,
-            self.relation_name,
+    @staticmethod
+    def _select_relation(relations, relation_id):
+        for relation in relations:
+            if relation.id == relation_id:
+                return relation
+
+    @staticmethod
+    def _remote_unit_name(client_name):
+        ridx = client_name.rindex('-')
+        return 'ceph-radosgw/' + client_name[ridx + 1:]
+
+    def get_key_params(self, event):
+        caps = {'mon': ['allow rw'], 'osd': ['allow rwx']}
+        relation = self._select_relation(
+            self.charm.framework.model.relations[event.relation_name],
+            event.relation_id
         )
+        unit_name = self._remote_unit_name(event.client_unit_name)
+        unit = self.charm.framework.model.get_unit(unit_name)
+        self.key_name = relation.data[unit]['key_name']
+        return self.key_name, caps
 
-    @property
-    def ready(self):
-        return True
+    @staticmethod
+    def _get_fsid():
+        with open('/var/snap/microceph/current/conf/ceph.conf', 'r') as f:
+            for line in f:
+                if line.startswith('fsid') and '=' in line:
+                    return line.split('=')[1].strip()
+
+    def update_broker_data(self, data, event):
+        data['fsid'] = self._get_fsid()
+        data[self.key_name + '_key'] = data.pop('key')

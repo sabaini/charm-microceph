@@ -37,6 +37,7 @@ import microceph
 from ceph_broker import get_named_key
 from relation_handlers import (
     CephClientProviderHandler,
+    CephRadosGWProviderHandler,
     MicroClusterNewNodeEvent,
     MicroClusterNodeAddedEvent,
     MicroClusterPeerHandler,
@@ -208,6 +209,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 self.handle_ceph,
             )
             handlers.append(self.ceph)
+        if self.can_add_handler("radosgw", handlers):
+            self.radosgw = CephRadosGWProviderHandler(
+                self,
+                self.handle_ceph
+            )
 
         handlers = super().get_relation_handlers(handlers)
         return handlers
@@ -220,14 +226,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         return False
 
-    def get_ceph_info_from_configs(self, service_name) -> dict:
+    def get_ceph_info_from_configs(self, service_name, caps=None) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
         public_addr = _get_local_ip_by_default_route()
         return {
             "auth": "cephx",
             "ceph-public-address": public_addr,
-            "key": get_named_key(service_name),
+            "key": get_named_key(name=service_name, caps=caps),
         }
 
     def handle_ceph(self, event) -> None:
