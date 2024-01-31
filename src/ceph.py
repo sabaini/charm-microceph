@@ -796,3 +796,13 @@ class ReplicatedPool(BasePool):
         update_pool(client=self.service, pool=self.name, settings={"size": str(self.replicas)})
         # Perform other common post pool creation tasks
         super(ReplicatedPool, self).update()
+
+
+def get_osd_count():
+    """Return the number of OSDs."""
+    try:
+        ret = check_output(["ceph", "osd", "ls"])
+        return ret.decode("utf8").count("\n")
+    except Exception as e:
+        log("Failed getting the number of OSDs: {}".format(str(e)))
+        return 0

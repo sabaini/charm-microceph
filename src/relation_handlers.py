@@ -28,6 +28,7 @@ from ops.framework import EventBase, EventSource, Object, ObjectEvents, StoredSt
 from ops_sunbeam.interfaces import OperatorPeers
 from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
 
+from ceph import get_osd_count
 from ceph_broker import is_leader as is_ceph_mon_leader
 from ceph_broker import process_requests
 
@@ -411,6 +412,10 @@ class CephClientProviderHandler(RelationHandler):
         # TODO: True only when charm completes bootstrapping??
         return True
 
+    def can_service(self, event):
+        """Test if we can service the relation."""
+        return True
+
     def update_broker_data(self, data, event):
         """Update a broker response after it's been produced."""
         pass
@@ -420,6 +425,11 @@ class CephClientProviderHandler(RelationHandler):
         return event.client_app_name, None
 
     def _on_process_request(self, event):
+        if not self.can_service(event):
+            logger.info("Deferring handling of relation: %s" % self.relation_name)
+            event.defer()
+            return
+
         logger.info(f"Processing broker req {event.broker_req}")
         broker_result = process_requests(event.broker_req)
         logger.info(broker_result)
@@ -444,6 +454,7 @@ class CephRadosGWProviderHandler(CephClientProviderHandler):
     def __init__(self, charm, callback_f):
         super().__init__(charm, "radosgw", callback_f)
         self.key_name = ""
+        self.force = False
 
     @staticmethod
     def _select_relation(relations, relation_id):
@@ -455,6 +466,10 @@ class CephRadosGWProviderHandler(CephClientProviderHandler):
     def _remote_unit_name(client_name):
         ridx = client_name.rindex("-")
         return "ceph-radosgw/" + client_name[ridx + 1 :]  # noqa: E203
+
+    def can_service(self, event):
+        """We need at least an OSD to create the pools."""
+        return self.force or get_osd_count() > 0
 
     def get_key_params(self, event):
         """Get the key name for a RadosGW unit and its capabilities."""

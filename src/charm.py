@@ -34,6 +34,7 @@ from ops.charm import ActionEvent
 from ops.main import main
 
 import microceph
+from ceph import get_osd_count
 from ceph_broker import get_named_key
 from relation_handlers import (
     CephClientProviderHandler,
@@ -119,6 +120,22 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         print(disks)
         event.set_results(disks)
 
+    def _notify_radosgw(self):
+        relations = self.framework.model.relations.get("radosgw")
+        if not relations:
+            return
+
+        try:
+            # The OSD count can take some time to show properly, so we
+            # instead force the relation to run, knowing that it was
+            # previously empty and it ran successfully.
+            self.radosgw.force = True
+            for relation in relations:
+                for unit in relation.units:
+                    self.on["radosgw"].relation_changed.emit(relation, relation.app, unit)
+        finally:
+            self.radosgw.force = False
+
     def _add_osd_action(self, event: ActionEvent):
         """Add OSD disks to microceph."""
         if not self.peers.interface.state.joined:
@@ -138,6 +155,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         if device_ids is not None:
             add_osd_specs.extend(device_ids.split(","))
 
+        empty = get_osd_count() == 0
+
         for spec in add_osd_specs:
             try:
                 microceph.add_osd_cmd(spec)
@@ -147,6 +166,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 return
 
         event.set_results({"status": "success"})
+        if empty:
+            # Inform RadosGW units that there's now an OSD.
+            self._notify_radosgw()
 
     def _handle_disk_list_output(self, output: str) -> dict:
         # Do not use _ for keys that need to set in action result, instead use -.
