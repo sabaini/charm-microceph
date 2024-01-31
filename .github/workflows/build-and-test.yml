@@ -112,3 +112,10 @@ jobs:
           ~/actionutils.sh wait_for_osds 3
           sudo microceph.ceph -s
 
+      - name: Add and relate RadosGW charm
+        run: |
+          set -eux
+          juju deploy -m admin/controller ch:ceph-radosgw
+          sleep 120
+          juju integrate -m admin/controller ceph-radosgw microceph
+          sleep 300
