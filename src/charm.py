@@ -30,7 +30,6 @@ import charms.operator_libs_linux.v2.snap as snap
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
-from netifaces import AF_INET, gateways, ifaddresses
 from ops.charm import ActionEvent
 from ops.main import main
 

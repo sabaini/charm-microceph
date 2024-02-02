@@ -28,7 +28,7 @@ def remove_cluster_member(name: str, is_force: bool) -> None:
     _run_cmd(cmd)
 
 
-def get_public_address(hostname:str = None) -> str:
+def get_public_address(hostname: str = None) -> str:
     """Returns MicroCeph public address for hostname, or local address."""
     name = hostname
     if not name:
