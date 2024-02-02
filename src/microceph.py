@@ -4,6 +4,7 @@
 
 import logging
 import subprocess
+from socket import gethostname
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,30 @@ def remove_cluster_member(name: str, is_force: bool) -> None:
     if is_force:
         cmd.append("--force")
     _run_cmd(cmd)
+
+
+def get_public_address(hostname:str = None) -> str:
+    """Returns MicroCeph public address for hostname, or local address."""
+    name = hostname
+    if not name:
+        # use local name if none provided.
+        name = gethostname()
+
+    cmd = [
+        "microceph",
+        "cluster",
+        "sql",
+        f"select value from config where key = 'mon.host.{name}'",
+    ]
+    # NOTE: output is of the form.
+    # '+-------+\n| value |\n+-------+\n+-------+\n'
+    # '+------------+\n|   value    |\n+------------+\n| 10.5.2.132 |\n+------------+\n'
+    output = _run_cmd(cmd).rsplit(" ", 2)
+
+    if "value" in output[-2]:
+        raise ValueError(f"Provided hostname {name} has no address record in MicroCeph.")
+
+    return output[-2]
 
 
 def is_cluster_member(hostname: str) -> bool:

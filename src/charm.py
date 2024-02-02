@@ -46,22 +46,6 @@ from relation_handlers import (
 logger = logging.getLogger(__name__)
 
 
-def _get_local_ip_by_default_route() -> str:
-    """Get IP address of host associated with default gateway."""
-    interface = "lo"
-    ip = "127.0.0.1"
-
-    # TOCHK: Gathering only IPv4
-    if "default" in gateways():
-        interface = gateways()["default"][AF_INET][1]
-
-    ip_list = ifaddresses(interface)[AF_INET]
-    if len(ip_list) > 0 and "addr" in ip_list[0]:
-        ip = ip_list[0]["addr"]
-
-    return ip
-
-
 class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     """Charm the service."""
 
@@ -239,7 +223,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     def get_ceph_info_from_configs(self, service_name) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
-        public_addr = _get_local_ip_by_default_route()
+        public_addr = microceph.get_public_address()
         return {
             "auth": "cephx",
             "ceph-public-address": public_addr,
