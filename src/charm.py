@@ -27,6 +27,7 @@ from socket import gethostname
 from typing import List
 
 import charms.operator_libs_linux.v2.snap as snap
+import netifaces
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
@@ -219,13 +220,34 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         return False
 
+    def _lookup_system_interfaces(self, mon_hosts: list) -> str:
+        """Looks up available addresses on the machine and returns addr if found in mon_hosts."""
+        if not mon_hosts:
+            return ""
+
+        for intf in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(intf)
+
+            # check ipv4 addresses
+            for addr in addrs[netifaces.AF_INET]:
+                if addr["addr"] in mon_hosts:
+                    return addr["addr"]
+
+            # check ipv6 addresses.
+            for addr in addrs[netifaces.AF_INET6]:
+                if addr["addr"] in mon_hosts:
+                    return addr["addr"]
+
+        # return empty string if none found.
+        return ""
+
     def get_ceph_info_from_configs(self, service_name) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
-        public_addr = microceph.get_public_address()
+        public_addrs = microceph.get_mon_public_addresses()
         return {
             "auth": "cephx",
-            "ceph-public-address": public_addr,
+            "ceph-public-address": self._lookup_system_interfaces(public_addrs),
             "key": get_named_key(service_name),
         }
 

@@ -27,7 +27,7 @@ def remove_cluster_member(name: str, is_force: bool) -> None:
     _run_cmd(cmd)
 
 
-def get_public_address() -> str:
+def get_mon_public_addresses() -> list:
     """Returns first mon host address as read from the ceph.conf file."""
     conf_file_path = "/var/snap/microceph/current/conf/ceph.conf"
     public_addrs = []
@@ -40,7 +40,7 @@ def get_public_address() -> str:
                 public_addrs.extend(addrs)
                 break
 
-    return public_addrs[0]
+    return public_addrs
 
 
 def is_cluster_member(hostname: str) -> bool:
