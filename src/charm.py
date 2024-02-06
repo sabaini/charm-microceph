@@ -261,7 +261,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.bootstrap_cluster(event)
             # mark bootstrap node also as joined
             self.peers.interface.state.joined = True
-            self.configure_ceph()
 
         self.set_leader_ready()
 
@@ -322,28 +321,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
             self.peers.interface.state.joined = True
             self.peers.set_unit_data({"joined": json.dumps(True)})
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
-            raise e
-
-    def configure_ceph(self) -> None:
-        """Configure Ceph.
-
-        Set mon_allow_pool_size_one to true
-        """
-        cmds = [
-            ["ceph", "config", "set", "global", "mon_allow_pool_size_one", "true"],
-            ["ceph", "config", "set", "global", "osd_pool_default_size", "1"],
-        ]
-        try:
-            for cmd in cmds:
-                logger.debug(f'Running command {" ".join(cmd)}')
-                process = subprocess.run(
-                    cmd, capture_output=True, text=True, check=True, timeout=60
-                )
-                logger.debug(
-                    f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}"
-                )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             raise e
