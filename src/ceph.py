@@ -804,5 +804,5 @@ def get_osd_count():
         ret = check_output(["ceph", "osd", "ls"])
         return ret.decode("utf8").count("\n")
     except Exception as e:
-        log("Failed getting the number of OSDs: {}".format(str(e)))
+        log("Failed getting the number of OSDs: {}".format(str(e)), WARNING)
         return 0

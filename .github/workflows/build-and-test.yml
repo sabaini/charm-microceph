@@ -119,6 +119,12 @@ jobs:
           sleep 120
           juju integrate -m admin/controller ceph-radosgw microceph
           sleep 300
+          if [[ juju status -m admin/controller | grep -E 'radosgw/.*active' ]] ; then
+            echo "radosgw unit is active"
+          else
+            echo "radosgw not active after timeout"
+            exit 1
+          fi
           
   juju-test:
     needs:
