@@ -266,14 +266,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         # return empty string if none found.
         return ""
 
-    def get_ceph_info_from_configs(self, service_name) -> dict:
+    def get_ceph_info_from_configs(self, service_name, caps=None) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
         public_addrs = microceph.get_mon_public_addresses()
         return {
             "auth": "cephx",
             "ceph-public-address": self._lookup_system_interfaces(public_addrs),
-            "key": get_named_key(service_name),
+            "key": get_named_key(name=service_name, caps=caps),
         }
 
     def handle_ceph(self, event) -> None:
