@@ -27,6 +27,22 @@ def remove_cluster_member(name: str, is_force: bool) -> None:
     _run_cmd(cmd)
 
 
+def get_mon_public_addresses() -> list:
+    """Returns first mon host address as read from the ceph.conf file."""
+    conf_file_path = "/var/snap/microceph/current/conf/ceph.conf"
+    public_addrs = []
+    with open(conf_file_path, "r") as conf_file:
+        lines = conf_file.readlines()
+        for line in lines:
+            if "mon host" in line:
+                addrs = line.split(" ")[-1].split(",")
+                logger.debug(f"Found public addresses {addrs} in conf file.")
+                public_addrs.extend(addrs)
+                break
+
+    return public_addrs
+
+
 def is_cluster_member(hostname: str) -> bool:
     """Checks if the provided host is part of the microcluster."""
     cmd = ["microceph", "status"]

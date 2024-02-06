@@ -27,10 +27,10 @@ from socket import gethostname
 from typing import List
 
 import charms.operator_libs_linux.v2.snap as snap
+import netifaces
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
-from netifaces import AF_INET, gateways, ifaddresses
 from ops.charm import ActionEvent
 from ops.main import main
 
@@ -46,22 +46,6 @@ from relation_handlers import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _get_local_ip_by_default_route() -> str:
-    """Get IP address of host associated with default gateway."""
-    interface = "lo"
-    ip = "127.0.0.1"
-
-    # TOCHK: Gathering only IPv4
-    if "default" in gateways():
-        interface = gateways()["default"][AF_INET][1]
-
-    ip_list = ifaddresses(interface)[AF_INET]
-    if len(ip_list) > 0 and "addr" in ip_list[0]:
-        ip = ip_list[0]["addr"]
-
-    return ip
 
 
 class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
@@ -261,14 +245,35 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         return False
 
-    def get_ceph_info_from_configs(self, service_name, caps=None) -> dict:
+    def _lookup_system_interfaces(self, mon_hosts: list) -> str:
+        """Looks up available addresses on the machine and returns addr if found in mon_hosts."""
+        if not mon_hosts:
+            return ""
+
+        for intf in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(intf)
+
+            # check ipv4 addresses
+            for addr in addrs.get(netifaces.AF_INET, []):
+                if addr["addr"] in mon_hosts:
+                    return addr["addr"]
+
+            # check ipv6 addresses.
+            for addr in addrs.get(netifaces.AF_INET6, []):
+                if addr["addr"] in mon_hosts:
+                    return addr["addr"]
+
+        # return empty string if none found.
+        return ""
+
+    def get_ceph_info_from_configs(self, service_name) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
-        public_addr = _get_local_ip_by_default_route()
+        public_addrs = microceph.get_mon_public_addresses()
         return {
             "auth": "cephx",
-            "ceph-public-address": public_addr,
-            "key": get_named_key(name=service_name, caps=caps),
+            "ceph-public-address": self._lookup_system_interfaces(public_addrs),
+            "key": get_named_key(service_name),
         }
 
     def handle_ceph(self, event) -> None:
