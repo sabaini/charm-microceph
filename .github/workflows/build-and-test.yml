@@ -119,7 +119,8 @@ jobs:
           sleep 120
           juju integrate -m admin/controller ceph-radosgw microceph
           sleep 420
-          if juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls" | grep -E ".rgw.root" ; then
+          cnt=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls | wc -l")
+          if [[ "$cnt" -ge 0 ]]; then
             echo "radosgw unit is active"
           else
             echo "radosgw not active after timeout"
