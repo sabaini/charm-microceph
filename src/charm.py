@@ -152,7 +152,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         disks = {"osds": [], "unpartitioned-disks": []}
 
         # Used in each matched regex: \w, space, -, backslash
-        osds_re = r"\n\|([\w -]+)\|([\w -]+)\|([\w -\/]+)\|\n"
+        osds_re = r"\n\|([\w -]+)\|([\w .-]+)\|([\w -\/]+)\|\n"
         osds = re.findall(osds_re, output)
 
         # Used in each matched regex: \w, space, -, backslash, dot
