@@ -166,9 +166,9 @@ jobs:
       - name: Add and relate RadosGW charm
         run: |
           set -eux
-          juju deploy -m admin/controller ch:ceph-radosgw
+          juju deploy ch:ceph-radosgw
           sleep 120
-          juju integrate -m admin/controller ceph-radosgw microceph
+          juju integrate ceph-radosgw microceph
           sleep 420
           for i in $(seq 1 20); do
             rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
