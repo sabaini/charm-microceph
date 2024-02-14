@@ -115,23 +115,23 @@ jobs:
       - name: Add and relate RadosGW charm
         run: |
           set -eux
-          prev=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls | wc -l")
           juju deploy -m admin/controller ch:ceph-radosgw
           sleep 120
           juju integrate -m admin/controller ceph-radosgw microceph
           sleep 420
           for i in $(seq 1 20); do
-            curr=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls | wc -l")
-            if [[ $curr -gt $prev ]]; then
-              echo "Found new pools"
+            rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
+            if echo "$rgwpools" | grep -E 'rgw' ; then
+              echo "Found RadosGW pools"
               break
             else
               echo -n '.'
-              sleep 30
+              sleep 60
             fi
           done
-          if [[ $curr -le $prev ]]; then
-            echo "No new pools were created"
+          rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
+          if ! echo "$rgwpools" | grep -E "rgw" ; then
+            echo "No RadosGW pools were created"
             juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls"
             juju ssh microceph/0 -- "sudo microceph.ceph -s"
             exit 1
