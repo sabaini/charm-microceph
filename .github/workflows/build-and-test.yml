@@ -111,31 +111,6 @@ jobs:
           sudo microceph.ceph -s
           ~/actionutils.sh wait_for_osds 3
           sudo microceph.ceph -s
-
-      - name: Add and relate RadosGW charm
-        run: |
-          set -eux
-          juju deploy -m admin/controller ch:ceph-radosgw
-          sleep 120
-          juju integrate -m admin/controller ceph-radosgw microceph
-          sleep 420
-          for i in $(seq 1 20); do
-            rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
-            if echo "$rgwpools" | grep -E 'rgw' ; then
-              echo "Found RadosGW pools"
-              break
-            else
-              echo -n '.'
-              sleep 60
-            fi
-          done
-          rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
-          if ! echo "$rgwpools" | grep -E "rgw" ; then
-            echo "No RadosGW pools were created"
-            juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls"
-            juju ssh microceph/0 -- "sudo microceph.ceph -s"
-            exit 1
-          fi
           
   juju-test:
     needs:
@@ -187,6 +162,31 @@ jobs:
           juju run microceph/0 add-osd loop-spec=4G,1 --wait=2m
           juju run microceph/1 add-osd loop-spec=4G,1 --wait=2m
           juju run microceph/2 add-osd loop-spec=4G,1 --wait=2m
+
+      - name: Add and relate RadosGW charm
+        run: |
+          set -eux
+          juju deploy -m admin/controller ch:ceph-radosgw
+          sleep 120
+          juju integrate -m admin/controller ceph-radosgw microceph
+          sleep 420
+          for i in $(seq 1 20); do
+            rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
+            if echo "$rgwpools" | grep -E 'rgw' ; then
+              echo "Found RadosGW pools"
+              break
+            else
+              echo -n '.'
+              sleep 60
+            fi
+          done
+          rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
+          if ! echo "$rgwpools" | grep -E "rgw" ; then
+            echo "No RadosGW pools were created"
+            juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls"
+            juju ssh microceph/0 -- "sudo microceph.ceph -s"
+            exit 1
+          fi
 
       - name: Remove Unit
         run: |
