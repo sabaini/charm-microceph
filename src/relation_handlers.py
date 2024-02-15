@@ -471,8 +471,7 @@ class CephRadosGWProviderHandler(CephClientProviderHandler):
 
     @staticmethod
     def _remote_unit_name(client_name):
-        ridx = client_name.rindex("-")
-        return "ceph-radosgw/" + client_name[ridx + 1 :]  # noqa: E203
+        return "ceph-radosgw/" + client_name.split("-")[-1]
 
     def can_service(self, event):
         """We need at least an OSD to create the pools."""
