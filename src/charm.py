@@ -35,9 +35,11 @@ from ops.charm import ActionEvent
 from ops.main import main
 
 import microceph
+from ceph import get_osd_count
 from ceph_broker import get_named_key
 from relation_handlers import (
     CephClientProviderHandler,
+    CephRadosGWProviderHandler,
     MicroClusterNewNodeEvent,
     MicroClusterNodeAddedEvent,
     MicroClusterPeerHandler,
@@ -118,6 +120,22 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         print(disks)
         event.set_results(disks)
 
+    def _notify_radosgw(self):
+        relations = self.framework.model.relations.get("radosgw")
+        if not relations:
+            return
+
+        try:
+            # The OSD count can take some time to show properly, so we
+            # instead force the relation to run, knowing that it was
+            # previously empty and it ran successfully.
+            self.radosgw.force = True
+            for relation in relations:
+                for unit in relation.units:
+                    self.on["radosgw"].relation_changed.emit(relation, relation.app, unit)
+        finally:
+            self.radosgw.force = False
+
     def _add_osd_action(self, event: ActionEvent):
         """Add OSD disks to microceph."""
         if not self.peers.interface.state.joined:
@@ -137,6 +155,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         if device_ids is not None:
             add_osd_specs.extend(device_ids.split(","))
 
+        empty = get_osd_count() == 0
+
         for spec in add_osd_specs:
             try:
                 microceph.add_osd_cmd(spec)
@@ -146,6 +166,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 return
 
         event.set_results({"status": "success"})
+        if empty:
+            # Inform RadosGW units that there's now an OSD.
+            self._notify_radosgw()
 
     def _handle_disk_list_output(self, output: str) -> dict:
         # Do not use _ for keys that need to set in action result, instead use -.
@@ -208,6 +231,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 self.handle_ceph,
             )
             handlers.append(self.ceph)
+        if self.can_add_handler("radosgw", handlers):
+            self.radosgw = CephRadosGWProviderHandler(self, self.handle_ceph)
 
         handlers = super().get_relation_handlers(handlers)
         return handlers
@@ -241,14 +266,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         # return empty string if none found.
         return ""
 
-    def get_ceph_info_from_configs(self, service_name) -> dict:
+    def get_ceph_info_from_configs(self, service_name, caps=None) -> dict:
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
         public_addrs = microceph.get_mon_public_addresses()
         return {
             "auth": "cephx",
             "ceph-public-address": self._lookup_system_interfaces(public_addrs),
-            "key": get_named_key(service_name),
+            "key": get_named_key(name=service_name, caps=caps),
         }
 
     def handle_ceph(self, event) -> None:

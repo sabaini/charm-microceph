@@ -20,6 +20,8 @@ tags:
 provides:
   ceph:
     interface: ceph-client
+  radosgw:
+    interface: ceph-radosgw
 
 peers:
   peers:
