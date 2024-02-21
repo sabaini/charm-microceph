@@ -21,10 +21,10 @@ This charm deploys and manages microceph.
 """
 import json
 import logging
-from typing import Callable
+from typing import Callable, Dict, List
 
 from ops.charm import CharmBase, RelationEvent
-from ops.framework import EventBase, EventSource, Object, ObjectEvents, StoredState
+from ops.framework import EventBase, EventSource, Handle, Object, ObjectEvents, StoredState
 from ops_sunbeam.interfaces import OperatorPeers
 from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
 
@@ -47,12 +47,46 @@ class MicroClusterRemoveNodeEvent(RelationEvent):
     """charm runs remove-node to this event."""
 
 
+class UpgradeBaseEvent(EventBase):
+    """Base class for upgrade events."""
+
+    def __init__(self, handle: Handle, node: str = "", channel: str = "", nonce: str = ""):
+        super().__init__(handle)
+        self.node = node
+        self.channel = channel
+        self.nonce = nonce
+
+    def snapshot(self) -> Dict:
+        """Snapshot the event data."""
+        return {
+            "node": self.node,
+            "channel": self.channel,
+            "nonce": self.nonce,
+        }
+
+    def restore(self, snapshot: Dict) -> None:
+        """Restore the event data."""
+        self.node = snapshot["node"]
+        self.channel = snapshot["channel"]
+        self.nonce = snapshot["nonce"]
+
+
+class UpgradeNodeRequestEvent(UpgradeBaseEvent):
+    """Event to process an upgrade request for a node."""
+
+
+class UpgradeNodeDoneEvent(UpgradeBaseEvent):
+    """Event to indicate that an upgrade request has been processed."""
+
+
 class MicroClusterEvents(ObjectEvents):
     """Events related to MicroCluster apps."""
 
     add_node = EventSource(MicroClusterNewNodeEvent)
     node_added = EventSource(MicroClusterNodeAddedEvent)
     remove_node = EventSource(MicroClusterRemoveNodeEvent)
+    upgrade_request = EventSource(UpgradeNodeRequestEvent)
+    upgrade_done = EventSource(UpgradeNodeDoneEvent)
 
 
 class MicroClusterPeers(OperatorPeers):
@@ -86,38 +120,144 @@ class MicroClusterPeers(OperatorPeers):
         # Do nothing or raise an event to charm?
         pass
 
+    def set_upgrade_info(self, nonce: str, channel: str, nodes: List[str]) -> None:
+        """Set upgrade info in app data."""
+        self.set_app_data(
+            {
+                "upgrade-info": json.dumps(
+                    {
+                        "nonce": nonce,
+                        "nodes": nodes,
+                        "channel": channel,
+                    }
+                )
+            }
+        )
+
+    def get_upgrade_info(self) -> Dict:
+        """Get upgrade info from app data."""
+        s = self.get_app_data("upgrade-info")
+        if not s:
+            return {}
+        return json.loads(s)
+
+    def clear_upgrade_info(self) -> None:
+        """Clear upgrade info from app data."""
+        self.set_app_data({"upgrade-info": "{}"})  # empty json object
+
+    def _handle_upgrade_leader(self, event: EventBase, upgrade_info: Dict) -> None:
+        """Handle upgrade request on the leader unit."""
+        logger.debug(f"_handle_upgrade: {event}")
+
+        # Check for upgrade done events
+        if not event.unit:
+            return
+        upgrade_done = event.relation.data[event.unit].get("upgrade-done")
+        if not upgrade_done:
+            return
+
+        nonce = upgrade_info.get("nonce")
+        if upgrade_done != nonce:
+            # Safety check, ignore if martian nonce
+            logger.warning(
+                f"Nonce mismatch for {event.unit.name}, ignoring: {upgrade_done} != {nonce}"
+            )
+            return
+        logger.debug(f"Upgrade done for {event.unit.name}, {nonce}")
+
+        # Remove the node from the list of nodes to upgrade
+        nodes = upgrade_info["nodes"][:]
+        try:
+            nodes.remove(event.unit.name)
+        except ValueError:
+            logger.warning(f"upgrade done: {event.unit.name} not in upgrade list")
+            return
+        if nodes:
+            # Still nodes left to upgrade, set remaining nodes in app data
+            logger.debug(f"set_upgrade_info for: {nodes}")
+            self.set_upgrade_info(nonce, upgrade_info["channel"], nodes)
+        else:
+            logger.debug(f"no more nodes for {nonce}, clear_upgrade_info")
+            self.clear_upgrade_info()
+
+    def _rel_changed_leader(self, event: EventBase) -> None:
+        """Handle relation changed event for leader unit."""
+        upgrade_info = self.get_upgrade_info()
+        if upgrade_info:
+            # handle upgrade request
+            self._handle_upgrade_leader(event, upgrade_info)
+            return
+
+        join_keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
+        if not join_keys:
+            logger.debug("We are the seed node.")
+            # The seed node is implicitly joined, so there's no need to emit an event.
+            self.state.joined = True
+            # No peers yet, init channel info
+            if not self.get_app_data("channel"):
+                self.set_app_data({"channel": self.model.config["snap-channel"]})
+
+        if not event.unit:
+            # we don't expect any other app data change here - ignore
+            return
+
+        if f"{event.unit.name}.join_token" in join_keys:
+            logger.debug(f"Already added {event.unit.name} to the cluster")
+            return
+
+        logger.debug("Emitting add_node event")
+        self.on.add_node.emit(**self._event_args(event))
+
+    def _handle_upgrade_nonldr(self, event: EventBase, upgrade_info: Dict) -> None:
+        """Handle upgrade request for non-leader units."""
+        nodes = upgrade_info.get("nodes")
+        if not nodes:  # no nodes to upgrade
+            return
+        # are we top of stack?
+        unit = nodes.pop(0)
+        if unit != self.model.unit.name:
+            # no, another unit should upgrade
+            logger.debug(f"upgrade nonldr: {unit} != {self.model.unit.name}")
+            return
+        logger.debug(f"emit upgrade request event for {unit}")
+        self.on.upgrade_request.emit(
+            node=unit,
+            channel=upgrade_info["channel"],
+            nonce=upgrade_info["nonce"],
+        )
+
+    def _rel_changed_nonldr(self, event: EventBase) -> None:
+        """Handle relation changed event for non-leader units."""
+        logger.debug(f"non-leader rel change: {event}")
+        upgrade_info = self.get_upgrade_info()
+        if upgrade_info:
+            # handle upgrade request
+            self._handle_upgrade_nonldr(event, upgrade_info)
+            return
+
+        # Node already joined as member of cluster
+        if self.state.joined:
+            logger.debug(f"Node {self.model.unit.name} already joined")
+            return
+
+        # Do we have a join token?
+        join_keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
+        if f"{self.model.unit.name}.join_token" not in join_keys:
+            logger.debug(f"Join token not yet generated for node {self.model.unit.name}")
+            return
+
+        # We have a join token, emit node_added event
+        logger.debug("Emitting node_added event")
+        event_args = self._event_args(event)
+        event_args["unit"] = self.model.unit
+        self.on.node_added.emit(**event_args)
+
     def on_changed(self, event: EventBase) -> None:
         """Handle relation changed event."""
-        keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
-        if event.unit and self.model.unit.is_leader():
-            if not keys:
-                logger.debug("We are the seed node.")
-                # The seed node is implicitly joined, so there's no need to emit an event.
-                self.state.joined = True
-
-            if f"{event.unit.name}.join_token" in keys:
-                logger.debug(f"Already added {event.unit.name} to the cluster")
-                return
-
-            logger.debug("Emitting add_node event")
-            self.on.add_node.emit(**self._event_args(event))
+        if self.model.unit.is_leader():
+            self._rel_changed_leader(event)
         else:
-            # Node already joined as member of cluster
-            if self.state.joined:
-                logger.debug(f"Node {self.model.unit.name} already joined")
-                return
-
-            # Join token not yet generated for this node
-            if f"{self.model.unit.name}.join_token" not in keys:
-                logger.debug(f"Join token not yet generated for node {self.model.unit.name}")
-                return
-
-            # TOCHK: Can we pull app data and unit data and emit node_added events based on them
-            # do we need to save joined in unit data which might trigger relation-changed event?
-            logger.debug("Emitting node_added event")
-            event_args = self._event_args(event)
-            event_args["unit"] = self.model.unit
-            self.on.node_added.emit(**event_args)
+            self._rel_changed_nonldr(event)
 
     def on_joined(self, event: EventBase) -> None:
         """Handle relation joined event."""
@@ -148,8 +288,19 @@ class MicroClusterPeerHandler(BasePeerHandler):
         self.framework.observe(peer_int.on.add_node, self._on_add_node)
         self.framework.observe(peer_int.on.node_added, self._on_node_added)
         self.framework.observe(peer_int.on.remove_node, self._on_remove_node)
+        self.framework.observe(peer_int.on.upgrade_request, self._on_upgrade_request)
+        self.framework.observe(peer_int.on.upgrade_done, self._on_upgrade_done)
 
         return peer_int
+
+    @property
+    def upgrade_callback(self) -> Callable:
+        """Return the upgrade callback."""
+        return self._upgrade_cb
+
+    @upgrade_callback.setter
+    def upgrade_callback(self, callback: Callable) -> None:
+        self._upgrade_cb = callback
 
     def _on_add_node(self, event):
         if not self.is_leader_ready():
@@ -183,6 +334,19 @@ class MicroClusterPeerHandler(BasePeerHandler):
             return
 
         self.callback_f(event)
+
+    def _on_upgrade_request(self, event):
+        logger.debug(f"Processing upgrade request event {event}")
+        if not self.is_leader_ready():
+            logger.debug("Upgrade request event, deferring the event as leader not ready")
+            event.defer()
+            return
+
+        self.upgrade_callback(event)
+
+    def _on_upgrade_done(self, event):
+        logger.debug(f"Processing upgrade done event {event}")
+        self.upgrade_callback(event)
 
 
 class ProcessBrokerRequestEvent(EventBase):

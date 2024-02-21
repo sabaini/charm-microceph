@@ -16,11 +16,21 @@
 
 """Handle Ceph commands."""
 
+import enum
 import json
 import logging
 import subprocess
+from typing import Tuple
+
+import requests
 
 logger = logging.getLogger(__name__)
+
+MAJOR_VERSIONS = {
+    "17": "quincy",
+    "18": "reef",
+    "19": "squid",
+}
 
 
 def _run_cmd(cmd: list) -> str:
@@ -95,8 +105,16 @@ def add_batch_osds(disks: list) -> None:
     # The disk add command takes a space separated list
     # of block devices as params.
     cmd.extend(disks)
-
     _run_cmd(cmd)
+
+
+def get_snap_info(snap_name):
+    """Get snap info from the charm store."""
+    url = f"https://api.snapcraft.io/v2/snaps/info/{snap_name}"
+    headers = {"Snap-Device-Series": "16"}  # magic header val for snapstore
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json()
 
 
 def list_disk_cmd() -> dict:
@@ -160,3 +178,74 @@ def _is_block_device_enrollable(disk: str) -> bool:
         return False
 
     return True
+
+
+def get_snap_tracks(snap_name):
+    """Get snap tracks from the charm store."""
+    info = get_snap_info(snap_name)
+    tracks = {item["channel"]["track"] for item in info["channel-map"]}
+    return tracks
+
+
+def can_upgrade_snap(current, new: str) -> bool:
+    """Check if we can upgrade snap to the provided track."""
+    if not new:
+        return False
+    if new == "latest":  # upgrade to latest is always allowed
+        return True
+
+    # track must exist
+    if new.lower() not in get_snap_tracks("microceph"):
+        logger.warning(f"Track {new} does not exist for snap microceph")
+        return False
+
+    # resolve major version if set to latest currently
+    if current == "latest":
+        ver = get_snap_info("microceph")["latest"]
+        current = MAJOR_VERSIONS[ver]
+        logger.debug(f"Resolved 'latest' track to {current}")
+
+    # We must not downgrade the major version of the snap
+    alphabet = [chr(i) for i in range(ord("a"), ord("z") + 1)]
+    start_index = alphabet.index("q")  # quincy is our first
+    # q, r, ... z, a, b, ... p
+    succession = alphabet[start_index:] + alphabet[:start_index]
+    newer = succession.index(current[0]) <= succession.index(new[0])
+    return newer
+
+
+class CephHealth(enum.Enum):
+    """Enumerate ceph health status."""
+
+    Ok = "HEALTH_OK"
+    Warn = "HEALTH_WARN"
+    Err = "HEALTH_ERR"
+    Unknown = "HEALTH_UNKNOWN"
+
+    @classmethod
+    def from_string(cls, health_str: str):
+        """Construct a CephHealth object from a string."""
+        for health in cls:
+            if health.value == health_str:
+                return health
+        return cls.Unknown
+
+    def __str__(self):
+        """Return the string representation of the health."""
+        return self.value
+
+
+class CephStatus(object):
+    """Class to handle ceph health checks."""
+
+    def ceph_health(self) -> Tuple[CephHealth, str]:
+        """Return the health of the monitor."""
+        cmd = ["sudo", "microceph.ceph", "health", "detail", "--format=json"]
+        try:
+            output = _run_cmd(cmd)
+        except subprocess.CalledProcessError:
+            # ceph health detail command failed, possibly mon wasn't reachable
+            # as it's restarting. Return unknown health for this case.
+            return CephHealth.Unknown, "fault running ceph health detail command"
+        res = json.loads(output.strip())
+        return CephHealth.from_string(res["status"]), res["checks"]
