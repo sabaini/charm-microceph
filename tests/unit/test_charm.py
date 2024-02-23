@@ -241,3 +241,30 @@ Available unpartitioned disks on this system:
             ],
         }
         self._test_list_disks_action(microceph_cmd_output, expected_disks)
+
+    def test_list_disks_action_1_osd_no_disks_fqdn(self):
+        microceph_cmd_output = """
+Disks configured in MicroCeph:
++-----+-----------------+-----------------------------------------------------+
+| OSD |  LOCATION       |                        PATH                         |
++-----+-----------------+-----------------------------------------------------+
+| 0   | microceph-1.lxd | /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1 |
++-----+-----------------+-----------------------------------------------------+
+
+Available unpartitioned disks on this system:
++-------+----------+------+------+
+| MODEL | CAPACITY | TYPE | PATH |
++-------+----------+------+------+
+        """
+
+        expected_disks = {
+            "osds": [
+                {
+                    "osd": "0",
+                    "location": "microceph-1.lxd",
+                    "path": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_lxd_osd--1",
+                }
+            ],
+            "unpartitioned-disks": [],
+        }
+        self._test_list_disks_action(microceph_cmd_output, expected_disks)
