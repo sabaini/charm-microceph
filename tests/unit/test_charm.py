@@ -59,7 +59,8 @@ class TestCharm(test_utils.CharmTestCase):
         )
 
     @patch.object(microceph, "subprocess")
-    def test_add_osds_action_with_device_id(self, subprocess):
+    @patch("ceph.check_output")
+    def test_add_osds_action_with_device_id(self, _chk, subprocess):
         """Test action add_osds."""
         test_utils.add_complete_peer_relation(self.harness)
         self.harness._charm.peers.interface.state.joined = True
@@ -79,7 +80,8 @@ class TestCharm(test_utils.CharmTestCase):
         )
 
     @patch.object(microceph, "subprocess")
-    def test_add_osds_action_with_loop_spec(self, subprocess):
+    @patch("ceph.check_output")
+    def test_add_osds_action_with_loop_spec(self, _chk, subprocess):
         """Test action add_osds with loop file spec."""
         test_utils.add_complete_peer_relation(self.harness)
         self.harness._charm.peers.interface.state.joined = True
