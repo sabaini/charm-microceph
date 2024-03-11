@@ -26,3 +26,17 @@ provides:
 peers:
   peers:
     interface: ceph-peer
+
+storage:
+  # Charm enrolls the provisioned storage devices as OSDs.
+  osd-standalone:
+    type: block
+    multiple:
+      range: 0-
+    minimum-size: 2G
+
+  # Juju can provision storage, but charm will not perform any action.
+  manual:
+    type: block
+    multiple:
+      range: 0-

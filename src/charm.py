@@ -44,6 +44,7 @@ from relation_handlers import (
     MicroClusterNodeAddedEvent,
     MicroClusterPeerHandler,
 )
+from storage import StorageHandler
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,13 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     _state = ops.framework.StoredState()
     service_name = "microceph"
+    storage = None  # StorageHandler
 
     def __init__(self, framework: ops.framework.Framework) -> None:
         """Run constructor."""
         super().__init__(framework)
+
+        self.storage = StorageHandler(self)
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.list_disks_action, self._list_disks_action)
         self.framework.observe(self.on.add_osd_action, self._add_osd_action)
@@ -83,6 +87,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         try:
             snap.SnapCache()["microceph"].hold()
+            # Temporary fix while the auto connect request for the interface is accepted.
+            snap.SnapCache()["microceph"].connect("mount-observe")
         except Exception:
             logger.exception("Failed to hold microceph refresh: ")
 
@@ -240,10 +246,16 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     def ready_for_service(self) -> bool:
         """Check if service is ready or not."""
         # TODO(hemanth): check ceph quorum
-        if self.bootstrapped:
-            return True
+        if not snap.SnapCache()["microceph"].present:
+            logger.warning("Snap microceph not installed yet.")
+            return False
 
-        return False
+        if not microceph.is_cluster_member(gethostname()):
+            logger.warning("Microceph not bootstrapped yet.")
+            return False
+
+        # ready for service if leader has been announced.
+        return self.is_leader_ready()
 
     def _lookup_system_interfaces(self, mon_hosts: list) -> str:
         """Looks up available addresses on the machine and returns addr if found in mon_hosts."""
