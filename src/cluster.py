@@ -45,12 +45,10 @@ class ClusterNodes(ops.framework.Object):
         """Add node to microceph cluster."""
         if not event.unit:
             return
-        cmd = ["sudo", "microceph", "cluster", "add", event.unit.name]
+        cmd = ["microceph", "cluster", "add", event.unit.name]
         try:
-            logger.debug(f'Running command {" ".join(cmd)}')
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
-            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
-            token = process.stdout.strip()
+            out = microceph._run_cmd(cmd)
+            token = out.strip()
             self.charm.peers.set_app_data({f"{event.unit.name}.join_token": token})
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)

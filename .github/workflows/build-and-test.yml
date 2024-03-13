@@ -340,7 +340,9 @@ jobs:
           set -eux
           date
           juju config microceph snap-channel=reef/stable
-          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")'
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=20m
+          juju ssh microceph/0 -- sudo ceph -s
+          juju status
           date
 
       - name: Test that downgrade blocks
