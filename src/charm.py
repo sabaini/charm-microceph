@@ -19,7 +19,6 @@
 
 This charm deploys and manages microceph.
 """
-import json
 import logging
 import re
 import subprocess
@@ -30,10 +29,12 @@ import charms.operator_libs_linux.v2.snap as snap
 import netifaces
 import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
+import ops_sunbeam.guard as sunbeam_guard
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
 from ops.charm import ActionEvent
 from ops.main import main
 
+import cluster
 import microceph
 from ceph import get_osd_count
 from ceph_broker import get_named_key
@@ -43,6 +44,8 @@ from relation_handlers import (
     MicroClusterNewNodeEvent,
     MicroClusterNodeAddedEvent,
     MicroClusterPeerHandler,
+    UpgradeNodeDoneEvent,
+    UpgradeNodeRequestEvent,
 )
 from storage import StorageHandler
 
@@ -65,6 +68,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         self.framework.observe(self.on.list_disks_action, self._list_disks_action)
         self.framework.observe(self.on.add_osd_action, self._add_osd_action)
         self.framework.observe(self.on.stop, self._on_stop)
+        self.cluster_nodes = cluster.ClusterNodes(self)
+        self.cluster_upgrades = cluster.ClusterUpgrades(self)
 
     def _on_install(self, event: ops.framework.EventBase) -> None:
         config = self.model.config.get
@@ -91,6 +96,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             snap.SnapCache()["microceph"].connect("mount-observe")
         except Exception:
             logger.exception("Failed to hold microceph refresh: ")
+
+        self.channel = self.model.config.get("snap-channel")
 
     def _on_stop(self, event: ops.StopEvent):
         """Removes departing unit from the MicroCeph cluster forcefully."""
@@ -219,6 +226,21 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         return disks
 
+    @property
+    def channel(self) -> str:
+        """Get the saved snap channel."""
+        c = self.peers.get_app_data("channel")
+        if c:
+            return c
+        # return default channel if not set.
+        return self.model.config["snap-channel"]
+
+    @channel.setter
+    def channel(self, value: str) -> None:
+        if self.unit.is_leader():
+            logger.debug(f"Setting channel on peers rel: {value}")
+            self.peers.set_app_data({"channel": value})
+
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
         """Relation handlers for the service."""
         handlers = handlers or []
@@ -229,6 +251,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 self.configure_charm,
                 "peers" in self.mandatory_relations,
             )
+            self.peers.upgrade_callback = self.upgrade_dispatch
             handlers.append(self.peers)
         if self.can_add_handler("ceph", handlers):
             self.ceph = CephClientProviderHandler(
@@ -241,6 +264,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.radosgw = CephRadosGWProviderHandler(self, self.handle_ceph)
 
         handlers = super().get_relation_handlers(handlers)
+        logger.debug(f"Relation handlers: {handlers}")
         return handlers
 
     def ready_for_service(self) -> bool:
@@ -292,6 +316,20 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Callback for interface ceph."""
         logger.info("Callback for ceph interface, ignore")
 
+    def upgrade_dispatch(self, event: ops.framework.EventBase) -> None:
+        """Dispatch upgrade events."""
+        logger.debug(f"Dispatch upgrade: {self.unit.name}, {event}")
+        dispatch = {
+            UpgradeNodeRequestEvent: self.cluster_upgrades.upgrade_node_request,
+            UpgradeNodeDoneEvent: self.cluster_upgrades.upgrade_node_done,
+        }
+        hdlr = dispatch.get(type(event))
+        if not hdlr:
+            logger.debug(f"Unhandled event: {event}")
+            return
+        with sunbeam_guard.guard(self, "Upgrading"):
+            hdlr(event)
+
     def configure_app_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the leader unit."""
         if not self.is_leader_ready():
@@ -301,15 +339,22 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.configure_ceph()
 
         self.set_leader_ready()
+        snap_chan = self.model.config.get("snap-channel")
+
+        if self.cluster_upgrades.upgrade_requested(snap_chan):
+            ok, msg = self.cluster_upgrades.can_upgrade_charm_payload(snap_chan)
+            if not ok:
+                raise sunbeam_guard.BlockedExceptionError(msg)
+            self.cluster_upgrades.init_upgrade(snap_chan)
 
         if isinstance(event, MicroClusterNewNodeEvent):
-            self.add_node_to_cluster(event)
+            self.cluster_nodes.add_node_to_cluster(event)
 
     def configure_app_non_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the non leader unit."""
         super().configure_app_non_leader(event)
         if isinstance(event, MicroClusterNodeAddedEvent):
-            self.join_node_to_cluster(event)
+            self.cluster_nodes.join_node_to_cluster(event)
 
     def bootstrap_cluster(self, event: ops.framework.EventBase) -> None:
         """Bootstrap microceph cluster."""
@@ -330,38 +375,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
             if error_already_exists not in e.stderr:
                 raise e
-
-    def add_node_to_cluster(self, event: ops.framework.EventBase) -> None:
-        """Add node to microceph cluster."""
-        cmd = ["sudo", "microceph", "cluster", "add", event.unit.name]
-        try:
-            logger.debug(f'Running command {" ".join(cmd)}')
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
-            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
-            token = process.stdout.strip()
-            self.peers.set_app_data({f"{event.unit.name}.join_token": token})
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
-            error_node_already_exists = (
-                'Failed to create "internal_token_records" entry: UNIQUE '
-                "constraint failed: internal_token_records.name"
-            )
-            if error_node_already_exists not in e.stderr:
-                raise e
-
-    def join_node_to_cluster(self, event: ops.framework.EventBase) -> None:
-        """Join node to microceph cluster."""
-        token = self.peers.get_app_data(f"{event.unit.name}.join_token")
-        cmd = ["sudo", "microceph", "cluster", "join", token]
-        try:
-            logger.debug(f'Running command {" ".join(cmd)}')
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
-            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
-            self.peers.interface.state.joined = True
-            self.peers.set_unit_data({"joined": json.dumps(True)})
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
-            raise e
 
     def configure_ceph(self) -> None:
         """Configure Ceph.

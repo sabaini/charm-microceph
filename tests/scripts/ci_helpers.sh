@@ -15,6 +15,16 @@ function check_osd_count() {
     juju status
 }
 
+function install_deps() {
+    date
+    sudo apt-get -qq install jq
+    sudo snap install juju
+    mkdir -p ~/.local/share/juju
+    juju bootstrap localhost
+    juju add-model microceph-test
+    date
+}
+
 run="${1}"
 shift
 

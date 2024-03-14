@@ -270,3 +270,85 @@ Available unpartitioned disks on this system:
             "unpartitioned-disks": [],
         }
         self._test_list_disks_action(microceph_cmd_output, expected_disks)
+
+    @patch("requests.get")
+    def test_get_snap_info(self, mock_get):
+        # Sample mocked response data
+        mock_response_data = {
+            "name": "test-snap",
+            "summary": "A test snap",
+            # ... add more fields as needed
+        }
+        mock_response = MagicMock()
+        # mock_response.raise_for_status.return_value = None  # Avoid raising exceptions
+        mock_response.json.return_value = mock_response_data
+        mock_get.return_value = mock_response
+
+        result = microceph.get_snap_info("test-snap")
+
+        self.assertEqual(result, mock_response_data)
+        mock_get.assert_called_once_with(
+            "https://api.snapcraft.io/v2/snaps/info/test-snap",
+            headers={"Snap-Device-Series": "16"},
+        )
+
+    @patch("microceph.get_snap_info")
+    def test_get_snap_tracks(self, mock_get_snap_info):
+        # Simulate get_snap_info output
+        mock_snap_info = {
+            "channel-map": [
+                {"channel": {"track": "quincy/stable"}},
+                {"channel": {"track": "reef/beta"}},
+                {"channel": {"track": "quincy/stable"}},
+            ]
+        }
+        mock_get_snap_info.return_value = mock_snap_info
+
+        # Execute the code under test
+        result = microceph.get_snap_tracks("test-snap")
+
+        # Expected Assertion
+        self.assertEqual(sorted(result), ["quincy/stable", "reef/beta"])
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_snap_empty_new_version(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"quincy", "reef"}
+        result = microceph.can_upgrade_snap("quincy", "")
+        self.assertFalse(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_snap_to_latest(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"quincy", "reef"}
+        result = microceph.can_upgrade_snap("latest", "latest")
+        self.assertTrue(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_snap_invalid_track(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"quincy"}
+        result = microceph.can_upgrade_snap("latest", "invalid")
+        self.assertFalse(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_major_version(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"quincy", "reef"}
+        result = microceph.can_upgrade_snap("quincy", "reef")
+        self.assertTrue(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_cannot_downgrade_major_version(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"quincy", "reef"}
+        result = microceph.can_upgrade_snap("reef", "quincy")
+        self.assertFalse(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_to_same_track(self, mock_get_snap_tracks):
+        mock_get_snap_tracks.return_value = {"reef", "squid"}
+        result = microceph.can_upgrade_snap("reef", "reef")
+        self.assertTrue(result)
+
+    @patch("microceph.get_snap_tracks")
+    def test_can_upgrade_future(self, mock_get_snap_tracks):
+        # hypothetical future releases
+        mock_get_snap_tracks.return_value = {"zoidberg", "alphaville", "pyjama"}
+        result = microceph.can_upgrade_snap("squid", "pyjama")
+        self.assertTrue(result)
