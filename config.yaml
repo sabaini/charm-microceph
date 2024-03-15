@@ -2,3 +2,8 @@ options:
   snap-channel:
     default: "reef/stable"
     type: string
+    description: |
+      The snap-channel option determines the MicroCeph snap that is
+      being installed via charm. Change this option to perform an
+      upgrade of MicroCeph. See https://charmhub.io/microceph for
+      details on the upgrade process.
