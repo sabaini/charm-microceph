@@ -109,6 +109,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 raise e
 
     def configure_charm(self, event: ops.framework.EventBase) -> None:
+        """Hook to apply configuration options."""
         self.configure_ceph()
         super().configure_charm(event)
 
