@@ -335,7 +335,6 @@ jobs:
         run: |
           set -eux
           for i in 0 1 2 ; do juju run microceph/$i add-osd loop-spec=4G,1 ; done
-          juju ssh microceph/0 -- sudo ceph osd pool set .mgr size 3
           sleep 60
           juju ssh microceph/0 -- sudo ceph -s
 
