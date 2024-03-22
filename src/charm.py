@@ -108,6 +108,10 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if microceph.is_cluster_member(gethostname()):
                 raise e
 
+    def configure_charm(self, event: ops.framework.EventBase) -> None:
+        self.configure_ceph()
+        super().configure_charm(event)
+
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
 
@@ -355,23 +359,12 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 raise e
 
     def configure_ceph(self) -> None:
-        """Configure Ceph.
-
-        Set mon_allow_pool_size_one to true
-        """
-        cmds = [
-            ["ceph", "config", "set", "global", "mon_allow_pool_size_one", "true"],
-            ["ceph", "config", "set", "global", "osd_pool_default_size", "1"],
-        ]
+        """Configure Ceph."""
+        default_rf = self.model.config.get("default-pool-size")
+        cmd = ["sudo", "microceph", "pool", "set-rf", "--size", default_rf, "''"]
         try:
-            for cmd in cmds:
-                logger.debug(f'Running command {" ".join(cmd)}')
-                process = subprocess.run(
-                    cmd, capture_output=True, text=True, check=True, timeout=60
-                )
-                logger.debug(
-                    f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}"
-                )
+            logger.debug(f"Setting the default pool size to {default_rf}")
+            subprocess.run(cmd, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             raise e
