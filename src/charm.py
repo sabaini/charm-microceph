@@ -361,7 +361,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def configure_ceph(self) -> None:
         """Configure Ceph."""
-        default_rf = self.model.config.get("default-pool-size")
+        default_rf = str(self.model.config.get("default-pool-size"))
         cmd = ["sudo", "microceph", "pool", "set-rf", "--size", default_rf, "''"]
         try:
             logger.debug(f"Setting the default pool size to {default_rf}")
