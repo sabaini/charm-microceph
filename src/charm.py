@@ -68,6 +68,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         # Initialise handlers for events.
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.stop, self._on_stop)
+        self.framework.observe(self.on.set_pool_size_action, self._set_pool_size_action)
 
     def _on_install(self, event: ops.framework.EventBase) -> None:
         config = self.model.config.get
@@ -109,6 +110,18 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
+
+    def _set_pool_size_action(self, event: ops.framework.EventBase) -> None:
+        """Set the size for one or more pools."""
+        pools = event.params.get("pools")
+        size = event.params.get("size")
+
+        try:
+            microceph.set_pool_size(pools, size)
+            event.set_results({"status": "success"})
+        except subprocess.CalledProcessError:
+            logger.warning("Failed to set new pool size")
+            event.fail("set-pool-size failed")
 
     @property
     def channel(self) -> str:
