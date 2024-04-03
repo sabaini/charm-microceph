@@ -281,13 +281,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     def configure_ceph(self) -> None:
         """Configure Ceph."""
         default_rf = str(self.model.config.get("default-pool-size"))
-        cmd = ["sudo", "microceph", "pool", "set-rf", "--size", default_rf, "''"]
-        try:
-            logger.debug(f"Setting the default pool size to {default_rf}")
-            subprocess.run(cmd, timeout=60)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
-            raise e
+        microceph.set_pool_size("''", default_rf)
 
 
 if __name__ == "__main__":  # pragma: no cover
