@@ -110,8 +110,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def configure_charm(self, event: ops.framework.EventBase) -> None:
         """Hook to apply configuration options."""
-        if self.configure_ceph(event):
-            super().configure_charm(event)
+        super().configure_charm(event)
+        self.configure_ceph(event)
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
@@ -238,7 +238,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.bootstrap_cluster(event)
             # mark bootstrap node also as joined
             self.peers.interface.state.joined = True
-            self.configure_ceph(event)
 
         self.set_leader_ready()
         snap_chan = self.model.config.get("snap-channel")
@@ -282,11 +281,10 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Configure Ceph."""
         if not self.ready_for_service():
             event.defer()
-            return False
+            return
 
         default_rf = str(self.model.config.get("default-pool-size"))
         microceph.set_pool_size("''", default_rf)
-        return True
 
 
 if __name__ == "__main__":  # pragma: no cover
