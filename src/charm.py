@@ -110,8 +110,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def configure_charm(self, event: ops.framework.EventBase) -> None:
         """Hook to apply configuration options."""
-        self.configure_ceph(event)
-        super().configure_charm(event)
+        if self.configure_ceph(event):
+            super().configure_charm(event)
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
@@ -278,14 +278,15 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if error_already_exists not in e.stderr:
                 raise e
 
-    def configure_ceph(self) -> None:
+    def configure_ceph(self, event) -> None:
         """Configure Ceph."""
         if not self.ready_for_service():
             event.defer()
-            return
+            return False
 
         default_rf = str(self.model.config.get("default-pool-size"))
         microceph.set_pool_size("''", default_rf)
+        return True
 
 
 if __name__ == "__main__":  # pragma: no cover
