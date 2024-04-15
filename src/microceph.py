@@ -83,6 +83,32 @@ def is_cluster_member(hostname: str) -> bool:
             raise e
 
 
+def bootstrap_cluster(micro_ip: str = None, public_net: str = None, cluster_net: str = None):
+    """Bootstrap MicroCeph cluster."""
+    cmd = ["microceph", "cluster", "bootstrap"]
+
+    if public_net:
+        cmd.extend(["--public-network", public_net])
+
+    if cluster_net:
+        cmd.extend(["--cluster-network", cluster_net])
+
+    if micro_ip:
+        cmd.extend(["--microceph-ip", micro_ip])
+
+    _run_cmd(cmd=cmd)
+
+
+def join_cluster(token: str, micro_ip: str = None, **kwargs):
+    """Join node to MicroCeph cluster."""
+    cmd = ["microceph", "cluster", "join", token]
+
+    if micro_ip:
+        cmd.extend(["--microceph-ip", micro_ip])
+
+    _run_cmd(cmd=cmd)
+
+
 # Disk CMDs and Helpers
 def add_osd_cmd(spec: str, wal_dev: str = None, db_dev: str = None) -> None:
     """Executes MicroCeph add osd cmd with provided spec."""
