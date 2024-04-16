@@ -257,13 +257,45 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         if isinstance(event, MicroClusterNodeAddedEvent):
             self.cluster_nodes.join_node_to_cluster(event)
 
+    def _get_space_subnet(self, space: str):
+        """Get the first available subnet in the network space."""
+        space_nets = self.model.get_binding(binding_key=space).network.interfaces
+        if space_nets:
+            return space_nets[0].subnet
+
+    def _get_bootstrap_params(self) -> dict:
+        """Fetch bootstrap parameters."""
+        micro_ip = cluster_net = public_net = ""
+
+        if "quincy" in self.model.config.get("snap-channel"):
+            # some quincy snap revisions do not support network configuration
+            logger.warning("Juju spaces incompatible with quincy revision snaps")
+            return {}
+
+        try:
+            # Public Network
+            public_net = self._get_space_subnet(space="public")
+            # Cluster Network
+            cluster_net = self._get_space_subnet(space="cluster")
+            # MicroCeph IP
+            micro_ip = self.model.get_binding(binding_key="admin").network.bind_address
+
+            logger.info(
+                {"public_net": public_net, "cluster_net": cluster_net, "micro_ip": micro_ip}
+            )
+        except ops.model.ModelError as e:
+            logger.exception(e)
+        finally:
+            return {
+                "public_net": format(public_net),
+                "cluster_net": format(cluster_net),
+                "micro_ip": format(micro_ip),
+            }
+
     def bootstrap_cluster(self, event: ops.framework.EventBase) -> None:
         """Bootstrap microceph cluster."""
-        cmd = ["sudo", "microceph", "cluster", "bootstrap"]
         try:
-            logger.debug(f'Running command {" ".join(cmd)}')
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=180)
-            logger.debug(f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}")
+            microceph.bootstrap_cluster(**self._get_bootstrap_params())
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             hostname = gethostname()
