@@ -316,7 +316,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             return
 
         default_rf = str(self.model.config.get("default-pool-size"))
-        microceph.set_pool_size("''", default_rf)
+        microceph.set_pool_size("", default_rf)
 
 
 if __name__ == "__main__":  # pragma: no cover
