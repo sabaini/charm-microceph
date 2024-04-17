@@ -315,8 +315,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             event.defer()
             return
 
-        default_rf = str(self.model.config.get("default-pool-size"))
-        microceph.set_pool_size("", default_rf)
+        default_rf = self.model.config.get("default-pool-size")
+        if self.channel == "quincy":
+            if default_rf == 3:
+                return
+            event.fail("default-pool-size can only be set on Reef onwards")
+            return
+
+        microceph.set_pool_size("", str(default_rf))
 
 
 if __name__ == "__main__":  # pragma: no cover
