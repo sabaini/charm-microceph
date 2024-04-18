@@ -316,12 +316,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             return
 
         default_rf = self.model.config.get("default-pool-size")
-        if "quincy" in self.channel:
-            if default_rf != 3:
-                event.fail("default-pool-size can only be set on Reef onwards")
-            return
-
-        microceph.set_pool_size("", str(default_rf))
+        try:
+            microceph.set_pool_size("", str(default_rf))
+        except subprocess.CalledProcessError as e:
+            if "unknown command" in e.stderr:
+                if default_rf != 3:
+                    event.fail("cannot set pool size: command not supported by microceph")
+                return
+            raise e
 
 
 if __name__ == "__main__":  # pragma: no cover
