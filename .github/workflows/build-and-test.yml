@@ -308,6 +308,8 @@ jobs:
         run: |
           set -eux
           juju config microceph snap-channel=non/exist
+          sleep 10
+          juju status
           juju wait-for application microceph --query='status=="blocked"'
           juju status
           juju status blocked | egrep '^microceph/.*Cannot upgrade.*to non/exist'
