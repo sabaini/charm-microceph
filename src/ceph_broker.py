@@ -28,6 +28,7 @@ import os
 import socket
 from subprocess import CalledProcessError, check_call, check_output
 from tempfile import NamedTemporaryFile
+from typing import Dict, List, TypeAlias
 
 from ceph import (
     DEBUG,
@@ -400,7 +401,9 @@ def handle_replicated_pool(request, service):
 
 LEADER = "leader"
 
-_default_caps = collections.OrderedDict(
+Capabilities: TypeAlias = Dict[str, List[str]]
+
+_default_caps: Capabilities = collections.OrderedDict(
     [
         ("mon", ["allow r", 'allow command "osd blacklist"', 'allow command "osd blocklist"']),
         ("osd", ["allow rwx"]),
@@ -457,8 +460,7 @@ def get_named_key(name, caps=None, pool_list=None):
     :param caps: dict of cephx capabilities
     :returns: Returns a cephx key
     """
-    key_name = "client.{}".format(name)
-    key = ceph_auth_get(key_name)
+    key = ceph_auth_get(name)
     if key:
         return key
 
@@ -472,7 +474,7 @@ def get_named_key(name, caps=None, pool_list=None):
         f"{VAR_LIB_CEPH}/mon/ceph-{socket.gethostname()}/keyring",
         "auth",
         "get-or-create",
-        key_name,
+        name,
     ]
     # Add capabilities
     for subsystem, subcaps in caps.items():
