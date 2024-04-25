@@ -417,3 +417,60 @@ jobs:
 
       - name: Validate the network configurations.
         run: ./tests/scripts/ci_helpers.sh verify_juju_spaces_config
+
+  juju-mds-test:
+    needs:
+      - lint
+      - unit-test
+      - build
+    name: Juju mds test
+    runs-on: [self-hosted, xlarge]
+    steps:
+
+      - name: Download charm
+        uses: actions/download-artifact@v3
+        with:
+          name: charms
+          path: ~/artifacts/
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup LXD
+        uses: canonical/setup-lxd@v0.1.1
+        with:
+          # pin lxd to LTS release.
+          channel: 5.21/stable
+
+      - name: Install dependencies
+        run: ./tests/scripts/ci_helpers.sh install_deps
+
+      - name: Install MicroCeph charm
+        run: |
+          set -eux
+          date
+          # constraints to deploy on virtual machine.
+          juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,3' --constraints="virt-type=virtual-machine root-disk=50G mem=8G"
+          # wait for charm to bootstrap and OSD devices to enroll.
+          juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
+          bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 3
+          date
+
+      - name: Add and relate CephFS charm
+        run: |
+          set -eux
+          juju deploy ch:ceph-fs
+          # wait for charm to bootstrap.
+          juju wait-for unit ceph-fs/0 --query='workload-status=="blocked"' --timeout=30m
+          juju integrate ceph-fs:ceph-mds microceph:mds
+          # wait for filesystem creation
+          juju wait-for application ceph-fs --query='name=="ceph-fs" && (status=="active" || status=="idle")' --timeout=10m
+          filesystems=$(juju ssh microceph/0 -- "sudo microceph.ceph fs ls")
+          if ! echo "$filesystems" | grep -E "ceph-fs" ; then
+            echo "Failed to create the ceph-fs filesystem"
+            juju ssh microceph/0 -- "sudo microceph.ceph fs ls"
+            exit 1
+          # check if the ceph-mds daemon is running
+          juju ssh ceph-fs/0 -- 'sudo systemctl is-active ceph-mds@$HOSTNAME.service --quiet'
