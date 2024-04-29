@@ -472,5 +472,6 @@ jobs:
             echo "Failed to create the ceph-fs filesystem"
             juju ssh microceph/0 -- "sudo microceph.ceph fs ls"
             exit 1
+          fi
           # check if the ceph-mds daemon is running
           juju ssh ceph-fs/0 -- 'sudo systemctl is-active ceph-mds@$HOSTNAME.service --quiet'
