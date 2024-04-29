@@ -324,6 +324,12 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             microceph.set_pool_size("", str(default_rf))
         except subprocess.CalledProcessError as e:
             if "unknown command" in e.stderr:
+                # Instead of checking for Reef+ in the channel, we run the
+                # command and then check against the error message. If the
+                # above string is found, then the command isn't present
+                # in microceph. Note that we only fail if the replication
+                # factor isn't 3, as that is the default, and we run this
+                # method on configuration changes.
                 if default_rf != 3:
                     event.fail("cannot set pool size: command not supported by microceph")
                 return
