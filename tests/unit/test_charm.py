@@ -30,6 +30,9 @@ class _MicroCephCharm(charm.MicroCephCharm):
         self.seen_events = []
         super().__init__(framework)
 
+    def configure_ceph(self, event):
+        return True
+
 
 class TestCharm(test_utils.CharmTestCase):
     PATCHES = ["subprocess"]

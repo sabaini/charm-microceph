@@ -7,3 +7,10 @@ options:
       being installed via charm. Change this option to perform an
       upgrade of MicroCeph. See https://charmhub.io/microceph for
       details on the upgrade process.
+  default-pool-size:
+    default: 3
+    type: int
+    description: |
+      The default replication factor for pools. Note that changing
+      this value only sets the default value; it doesn't change
+      the replication factor for existing pools.
