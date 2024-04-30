@@ -107,6 +107,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if microceph.is_cluster_member(gethostname()):
                 raise e
 
+    def configure_charm(self, event: ops.framework.EventBase) -> None:
+        """Hook to apply configuration options."""
+        super().configure_charm(event)
+        self.configure_ceph(event)
+
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
         self.configure_charm(event)
 
@@ -234,7 +239,6 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.bootstrap_cluster(event)
             # mark bootstrap node also as joined
             self.peers.interface.state.joined = True
-            self.configure_ceph()
 
         self.set_leader_ready()
         snap_chan = self.model.config.get("snap-channel")
@@ -312,26 +316,26 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if error_already_exists not in e.stderr:
                 raise e
 
-    def configure_ceph(self) -> None:
-        """Configure Ceph.
+    def configure_ceph(self, event) -> None:
+        """Configure Ceph."""
+        if not self.ready_for_service():
+            event.defer()
+            return
 
-        Set mon_allow_pool_size_one to true
-        """
-        cmds = [
-            ["ceph", "config", "set", "global", "mon_allow_pool_size_one", "true"],
-            ["ceph", "config", "set", "global", "osd_pool_default_size", "1"],
-        ]
+        default_rf = self.model.config.get("default-pool-size")
         try:
-            for cmd in cmds:
-                logger.debug(f'Running command {" ".join(cmd)}')
-                process = subprocess.run(
-                    cmd, capture_output=True, text=True, check=True, timeout=60
-                )
-                logger.debug(
-                    f"Command finished. stdout={process.stdout}, " f"stderr={process.stderr}"
-                )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(e.stderr)
+            microceph.set_pool_size("", str(default_rf))
+        except subprocess.CalledProcessError as e:
+            if "unknown command" in e.stderr:
+                # Instead of checking for Reef+ in the channel, we run the
+                # command and then check against the error message. If the
+                # above string is found, then the command isn't present
+                # in microceph. Note that we only fail if the replication
+                # factor isn't 3, as that is the default, and we run this
+                # method on configuration changes.
+                if default_rf != 3:
+                    event.fail("cannot set pool size: command not supported by microceph")
+                return
             raise e
 
 
