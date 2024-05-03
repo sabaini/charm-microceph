@@ -37,6 +37,7 @@ import microceph
 from ceph_broker import get_named_key
 from relation_handlers import (
     CephClientProviderHandler,
+    CephMdsProviderHandler,
     CephRadosGWProviderHandler,
     MicroClusterNewNodeEvent,
     MicroClusterNodeAddedEvent,
@@ -162,6 +163,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             handlers.append(self.ceph)
         if self.can_add_handler("radosgw", handlers):
             self.radosgw = CephRadosGWProviderHandler(self, self.handle_ceph)
+        if self.can_add_handler("mds", handlers):
+            self.mds = CephMdsProviderHandler(self, self.handle_ceph)
 
         handlers = super().get_relation_handlers(handlers)
         logger.debug(f"Relation handlers: {handlers}")

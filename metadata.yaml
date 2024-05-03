@@ -30,6 +30,8 @@ provides:
     interface: ceph-client
   radosgw:
     interface: ceph-radosgw
+  mds:
+    interface: ceph-mds
 
 peers:
   peers:

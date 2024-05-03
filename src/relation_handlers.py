@@ -21,7 +21,7 @@ This charm deploys and manages microceph.
 """
 import json
 import logging
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ops.charm import CharmBase, RelationEvent
 from ops.framework import EventBase, EventSource, Handle, Object, ObjectEvents, StoredState
@@ -29,6 +29,7 @@ from ops_sunbeam.interfaces import OperatorPeers
 from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
 
 from ceph import get_osd_count
+from ceph_broker import Capabilities
 from ceph_broker import is_leader as is_ceph_mon_leader
 from ceph_broker import process_requests
 
@@ -597,8 +598,15 @@ class CephClientProviderHandler(RelationHandler):
         """Update a broker response after it's been produced."""
         pass
 
-    def get_key_params(self, event):
-        """Get the key name and the capabilities required."""
+    @property
+    def client_type(self):
+        """Get the client type of the requester."""
+        return "client"
+
+    def get_key_params(
+        self, event: ProcessBrokerRequestEvent
+    ) -> Tuple[str, Optional[Capabilities]]:
+        """Get the client id and the capabilities required."""
         return event.client_app_name, None
 
     def _on_process_request(self, event):
@@ -612,7 +620,8 @@ class CephClientProviderHandler(RelationHandler):
         logger.info(broker_result)
         unit_response_key = "broker-rsp-" + event.client_unit_name
         response = {unit_response_key: broker_result}
-        data = self.charm.get_ceph_info_from_configs(*self.get_key_params(event))
+        client_id, caps = self.get_key_params(event)
+        data = self.charm.get_ceph_info_from_configs(f"{self.client_type}.{client_id}", caps)
         self.update_broker_data(data, event)
 
         self.interface.set_broker_response(
@@ -647,7 +656,9 @@ class CephRadosGWProviderHandler(CephClientProviderHandler):
         """We need at least an OSD to create the pools."""
         return self.force or get_osd_count() > 0
 
-    def get_key_params(self, event):
+    def get_key_params(
+        self, event: ProcessBrokerRequestEvent
+    ) -> Tuple[str, Optional[Capabilities]]:
         """Get the key name for a RadosGW unit and its capabilities."""
         caps = {"mon": ["allow rw"], "osd": ["allow rwx"]}
         relation = self._select_relation(
@@ -669,3 +680,49 @@ class CephRadosGWProviderHandler(CephClientProviderHandler):
         """For RadosGW, we want to change the key name and set the FSID."""
         data["fsid"] = self._get_fsid()
         data[self.key_name + "_key"] = data.pop("key")
+
+
+class CephMdsProviderHandler(CephClientProviderHandler):
+    """Handler for the ceph-mds relation."""
+
+    def __init__(self, charm, callback_f):
+        super().__init__(charm, "mds", callback_f)
+        self.mds_name = ""
+
+    @staticmethod
+    def _select_relation(relations, relation_id):
+        for relation in relations:
+            if relation.id == relation_id:
+                return relation
+
+    @property
+    def client_type(self):
+        """Get the client type of the requester."""
+        return "mds"
+
+    def get_key_params(
+        self, event: ProcessBrokerRequestEvent
+    ) -> Tuple[str, Optional[Capabilities]]:
+        """Get the key name for a mds unit and its capabilities."""
+        caps = {"osd": ["allow *"], "mds": ["allow"], "mon": ["allow rwx"]}
+        relation = self._select_relation(
+            self.charm.framework.model.relations[event.relation_name], event.relation_id
+        )
+        # TODO: could be worth moving this to the event data instead.
+        unit_name = event.client_app_name + "/" + event.client_unit_name.split("-")[-1]
+        unit = self.charm.framework.model.get_unit(unit_name)
+        # `mds-name` is consistent with previous implementations.
+        self.mds_name = relation.data[unit]["mds-name"]
+        return self.mds_name, caps
+
+    @staticmethod
+    def _get_fsid():
+        with open("/var/snap/microceph/current/conf/ceph.conf", "r") as f:
+            for line in f:
+                if line.startswith("fsid") and "=" in line:
+                    return line.split("=")[1].strip()
+
+    def update_broker_data(self, data, event):
+        """For ceph-mds, we want to change the key name and set the FSID."""
+        data["fsid"] = self._get_fsid()
+        data[self.mds_name + "_mds_key"] = data.pop("key")
