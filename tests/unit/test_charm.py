@@ -122,7 +122,9 @@ class TestCharm(test_utils.CharmTestCase):
         action_event.params = {"device-id": "/dev/sdb"}
         self.harness.charm.storage._add_osd_action(action_event)
 
-        action_event.set_results.assert_not_called()
+        action_event.set_results.assert_called_with(
+            {"message": "Node not yet joined in microceph cluster"}
+        )
         action_event.fail.assert_called()
 
     def _create_subprocess_output_mock(self, stdout):
@@ -148,7 +150,9 @@ class TestCharm(test_utils.CharmTestCase):
 
         action_event = MagicMock()
         self.harness.charm.storage._list_disks_action(action_event)
-        action_event.set_results.assert_not_called()
+        action_event.set_results.assert_called_with(
+            {"message": "Node not yet joined in microceph cluster"}
+        )
         action_event.fail.assert_called()
 
     @patch.object(microceph, "subprocess")

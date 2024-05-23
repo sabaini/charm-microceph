@@ -119,7 +119,8 @@ class StorageHandler(Object):
     def _add_osd_action(self, event: ActionEvent):
         """Add OSD disks to microceph."""
         if not self.charm.peers.interface.state.joined:
-            event.fail("Node not yet joined in microceph cluster")
+            event.set_results({"message": "Node not yet joined in microceph cluster"})
+            event.fail()
             return
 
         # list of osd specs to be executed with disk add cmd.
@@ -140,7 +141,8 @@ class StorageHandler(Object):
                 microceph.add_osd_cmd(spec)
             except (CalledProcessError, TimeoutExpired) as e:
                 logger.error(e.stderr)
-                event.fail(e.stderr)
+                event.set_results({"message": e.stderr})
+                event.fail()
                 return
 
         event.set_results({"status": "success"})
@@ -148,14 +150,16 @@ class StorageHandler(Object):
     def _list_disks_action(self, event: ActionEvent):
         """List enrolled and uncofigured disks."""
         if not self.charm.peers.interface.state.joined:
-            event.fail("Node not yet joined in microceph cluster")
+            event.set_results({"message": "Node not yet joined in microceph cluster"})
+            event.fail()
             return
 
         try:
             disks = microceph.list_disk_cmd()
         except (CalledProcessError, TimeoutExpired) as e:
             logger.warning(e.stderr)
-            event.fail(e.stderr)
+            event.set_results({"message": e.stderr})
+            event.fail()
             return
 
         osds = [self._to_lower_dict(osd) for osd in disks["ConfiguredDisks"]]
