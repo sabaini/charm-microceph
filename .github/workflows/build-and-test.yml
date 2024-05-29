@@ -144,7 +144,7 @@ jobs:
       - name: Install MicroCeph charm
         run: |
           date
-          juju deploy -n 3 ~/artifacts/microceph.charm
+          juju deploy -n 3 ~/artifacts/microceph.charm --config default-pool-size=1
           ./tests/scripts/ci_helpers.sh wait_for_microceph_bootstrap
           date
 
@@ -332,7 +332,7 @@ jobs:
           juju config microceph snap-channel=quincy/stable
           juju wait-for application microceph --query='name=="microceph" && (status=="active" || status=="idle")' --timeout=20m
 
-      - name: Add disks and configure pool size for health
+      - name: Add disks for health
         run: |
           set -eux
           for i in 0 1 2 ; do juju run microceph/$i add-osd loop-spec=4G,1 ; done
@@ -343,10 +343,15 @@ jobs:
         run: |
           set -eux
           date
-          juju config microceph snap-channel=reef/stable
-          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m
+          juju config microceph snap-channel=reef/candidate
+          sleep 60
+          # Initial wait
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m || true
+          # Get status
           juju ssh microceph/0 -- sudo ceph -s
           juju status
+          # Fail if goal status not reached
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
           date
 
       - name: Test the set-pool-size action

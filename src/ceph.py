@@ -30,6 +30,8 @@ https://github.com/juju/charm-helpers/blob/master/charmhelpers/contrib/storage/l
 import json
 import logging
 import math
+import os
+import socket
 from subprocess import CalledProcessError, check_call, check_output
 
 CRITICAL = "CRITICAL"
@@ -50,6 +52,10 @@ DEFAULT_POOL_WEIGHT = 10.0
 LEGACY_PG_COUNT = 200
 DEFAULT_MINIMUM_PGS = 2
 AUTOSCALER_DEFAULT_PGS = 32
+
+LEADER = "leader"
+PEON = "peon"
+QUORUM = [LEADER, PEON]
 
 logger = logging.getLogger(__name__)
 
@@ -806,3 +812,28 @@ def get_osd_count():
     except Exception as e:
         log("Failed getting the number of OSDs: {}".format(str(e)), WARNING)
         return 0
+
+
+def ceph_user():
+    """Return the ceph user name."""
+    return "ceph"
+
+
+def is_quorum():
+    """Check if the monitor is in quorum."""
+    asok = "/var/snap/microceph/current/run/ceph-mon.{}.asok".format(socket.gethostname())
+    cmd = ["ceph", "--admin-daemon", asok, "mon_status"]
+    if os.path.exists(asok):
+        try:
+            result = json.loads(str(check_output(cmd).decode("UTF-8")))
+        except CalledProcessError:
+            return False
+        except ValueError:
+            # Non JSON response from mon_status
+            return False
+        if result["state"] in QUORUM:
+            return True
+        else:
+            return False
+    else:
+        return False

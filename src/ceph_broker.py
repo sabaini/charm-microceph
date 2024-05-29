@@ -291,7 +291,7 @@ def process_requests_v1(reqs):  # noqa: C901
         else:
             ret = fn(request=req, service=svc)
 
-    if type(ret) == dict and "exit-code" in ret:
+    if type(ret) is dict and "exit-code" in ret:
         return ret
 
     return {"exit-code": 0}

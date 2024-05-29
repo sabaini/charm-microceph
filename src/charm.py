@@ -32,6 +32,7 @@ import ops_sunbeam.guard as sunbeam_guard
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
 from ops.main import main
 
+import ceph
 import cluster
 import microceph
 from ceph_broker import get_named_key
@@ -172,13 +173,16 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def ready_for_service(self) -> bool:
         """Check if service is ready or not."""
-        # TODO(hemanth): check ceph quorum
         if not snap.SnapCache()["microceph"].present:
             logger.warning("Snap microceph not installed yet.")
             return False
 
         if not microceph.is_cluster_member(gethostname()):
             logger.warning("Microceph not bootstrapped yet.")
+            return False
+
+        if not ceph.is_quorum():
+            logger.debug("Ceph cluster not in quorum, not ready yet")
             return False
 
         # ready for service if leader has been announced.
