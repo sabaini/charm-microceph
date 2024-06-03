@@ -125,7 +125,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             event.set_results({"status": "success"})
         except subprocess.CalledProcessError:
             logger.warning("Failed to set new pool size")
-            event.fail("set-pool-size failed")
+            event.set_results({"message": "set-pool-size failed"})
+            event.fail()
 
     @property
     def channel(self) -> str:
@@ -334,7 +335,10 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 # factor isn't 3, as that is the default, and we run this
                 # method on configuration changes.
                 if default_rf != 3:
-                    event.fail("cannot set pool size: command not supported by microceph")
+                    event.set_results(
+                        {"message": "cannot set pool size: command not supported by microceph"}
+                    )
+                    event.fail()
                 return
             raise e
 
