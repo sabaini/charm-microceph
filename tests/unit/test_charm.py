@@ -14,6 +14,7 @@
 
 """Tests for Microceph charm."""
 
+from subprocess import CalledProcessError
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import ops_sunbeam.test_utils as test_utils
@@ -92,6 +93,33 @@ class TestCharm(test_utils.CharmTestCase):
             check=True,
             timeout=180,
         )
+
+    @patch.object(microceph, "subprocess")
+    @patch("ceph.check_output")
+    def test_add_osds_action_with_already_added_device_id(self, _chk, subprocess):
+        """Test action add_osds."""
+        test_utils.add_complete_peer_relation(self.harness)
+        self.harness._charm.peers.interface.state.joined = True
+
+        disk = "/dev/sdb"
+        error = 'Error: failed to record disk: This "disks" entry already exists\n'
+        result = {"result": [{"spec": disk, "status": "failure", "message": error}]}
+        subprocess.CalledProcessError = CalledProcessError
+        subprocess.run.side_effect = CalledProcessError(returncode=1, cmd=["echo"], stderr=error)
+
+        action_event = MagicMock()
+        action_event.params = {"device-id": disk}
+        self.harness.charm.storage._add_osd_action(action_event)
+
+        subprocess.run.assert_called_with(
+            ["microceph", "disk", "add", disk],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=180,
+        )
+        action_event.set_results.assert_called_with(result)
+        action_event.fail.assert_called()
 
     @patch.object(microceph, "subprocess")
     @patch("ceph.check_output")

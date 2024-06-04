@@ -136,16 +136,20 @@ class StorageHandler(Object):
         if device_ids is not None:
             add_osd_specs.extend(device_ids.split(","))
 
+        error = False
+        result = {"result": []}
         for spec in add_osd_specs:
             try:
                 microceph.add_osd_cmd(spec)
+                result["result"].append({"spec": spec, "status": "success"})
             except (CalledProcessError, TimeoutExpired) as e:
                 logger.error(e.stderr)
-                event.set_results({"message": e.stderr})
-                event.fail()
-                return
+                result["result"].append({"spec": spec, "status": "failure", "message": e.stderr})
+                error = True
 
-        event.set_results({"status": "success"})
+        event.set_results(result)
+        if error:
+            event.fail()
 
     def _list_disks_action(self, event: ActionEvent):
         """List enrolled and uncofigured disks."""
