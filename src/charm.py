@@ -19,6 +19,7 @@
 
 This charm deploys and manages microceph.
 """
+import json
 import logging
 import subprocess
 from socket import gethostname
@@ -72,6 +73,8 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.stop, self._on_stop)
         self.framework.observe(self.on.set_pool_size_action, self._set_pool_size_action)
+        self.framework.observe(self.on.peers_relation_created, self._on_peer_relation_created)
+        self.framework.observe(self.on["peers"].relation_departed, self._on_peer_relation_departed)
 
     def _on_install(self, event: ops.framework.EventBase) -> None:
         config = self.model.config.get
@@ -109,6 +112,15 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if microceph.is_cluster_member(gethostname()):
                 raise e
 
+    def _on_peer_relation_created(self, event: ops.framework.EventBase) -> None:
+        public_address = self.model.get_binding(binding_key="public").network.bind_address
+        if public_address:
+            logger.debug("Setting peer unit data")
+            self.peers.set_unit_data({"public-address": str(public_address)})
+
+    def _on_peer_relation_departed(self, event: ops.framework.EventBase) -> None:
+        self.handle_traefik_ready(event)
+
     def configure_charm(self, event: ops.framework.EventBase) -> None:
         """Hook to apply configuration options."""
         super().configure_charm(event)
@@ -118,6 +130,14 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         with sunbeam_guard.guard(self, "Checking configs"):
             if not self.is_valid_placement_directive(self.model.config.get("enable-rgw")):
                 raise sunbeam_guard.BlockedExceptionError("Improper value for config enable-rgw")
+
+            namespace_projects = self.leader_get("namespace-projects")
+            if namespace_projects and json.loads(namespace_projects) != self.model.config.get(
+                "namespace-projects"
+            ):
+                raise sunbeam_guard.BlockedExceptionError(
+                    "Config namespace-projects cannot be changed after deployment"
+                )
 
             self.configure_charm(event)
 
@@ -154,6 +174,93 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             logger.debug(f"Setting channel on peers rel: {value}")
             self.peers.set_app_data({"channel": value})
 
+    @property
+    def rgw_port(self):
+        """Port used for RGW service."""
+        return 80
+
+    @property
+    def service_endpoints(self):
+        """Describe the swift/s3 service endpoints."""
+        ingress_url = None
+        try:
+            if self.traefik_route_rgw and self.traefik_route_rgw.ready:
+                scheme = self.traefik_route_rgw.interface.scheme
+                external_host = self.traefik_route_rgw.interface.external_host
+                ingress_url = f"{scheme}://{external_host}"
+        except (AttributeError, KeyError):
+            pass
+
+        if not ingress_url:
+            return []
+
+        namespace_projects = self.leader_get("namespace-projects")
+        if namespace_projects and json.loads(namespace_projects):
+            swift_url = f"{ingress_url}/swift/v1/AUTH_$(project_id)s"
+        else:
+            swift_url = f"{ingress_url}/swift/v1"
+
+        return [
+            {
+                "service_name": "swift",
+                "type": "object-store",
+                "description": "Object Store service",
+                "internal_url": swift_url,
+                "public_url": swift_url,
+                "admin_url": f"{ingress_url}/swift",
+            },
+            {
+                "service_name": "s3",
+                "type": "s3",
+                "description": "s3 service",
+                "internal_url": f"{ingress_url}",
+                "public_url": f"{ingress_url}",
+                "admin_url": f"{ingress_url}",
+            },
+        ]
+
+    @property
+    def traefik_config(self) -> dict:
+        """Config to publish to traefik."""
+        model = self.model.name
+        app = "rgw"
+
+        router_cfg = {
+            f"juju-{model}-{app}-router": {
+                "rule": "PathPrefix(`/`)",
+                "service": f"juju-{model}-{app}-service",
+                "entryPoints": ["web"],
+            },
+            f"juju-{model}-{app}-router-tls": {
+                "rule": "PathPrefix(`/`)",
+                "service": f"juju-{model}-{app}-service",
+                "entryPoints": ["websecure"],
+                "tls": {},
+            },
+        }
+
+        # Note: Currently rgw, mon services are enabled on all storage nodes.
+        # So get RGW IPs from mon ip addresses
+        # https://github.com/canonical/microceph/issues/368
+        # Get host key value from all units
+        ips = self.peers.get_all_unit_values(key="public-address", include_local_unit=True)
+        # ips = microceph.get_mon_public_addresses()
+        rgw_lb_servers = [{"url": f"http://{ip}:{self.rgw_port}"} for ip in ips]
+        health_check = {"path": "/swift/healthcheck", "scheme": "http"}
+        service_cfg = {
+            f"juju-{model}-{app}-service": {
+                "loadBalancer": {"servers": rgw_lb_servers, "healthCheck": health_check}
+            },
+        }
+
+        config = {
+            "http": {
+                "routers": router_cfg,
+                "services": service_cfg,
+            },
+        }
+        return config
+
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
         """Relation handlers for the service."""
         handlers = handlers or []
@@ -177,6 +284,24 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.radosgw = CephRadosGWProviderHandler(self, self.handle_ceph)
         if self.can_add_handler("mds", handlers):
             self.mds = CephMdsProviderHandler(self, self.handle_ceph)
+        if self.can_add_handler("traefik-route-rgw", handlers):
+            self.traefik_route_rgw = sunbeam_rhandlers.TraefikRouteHandler(
+                self,
+                "traefik-route-rgw",
+                self.handle_traefik_ready,
+                "traefik-route-rgw" in self.mandatory_relations,
+            )
+            handlers.append(self.traefik_route_rgw)
+        if self.can_add_handler("identity-service", handlers):
+            self.id_svc = sunbeam_rhandlers.IdentityServiceRequiresHandler(
+                self,
+                "identity-service",
+                self.configure_charm,
+                self.service_endpoints,
+                self.model.config["region"],
+                "identity-service" in self.mandatory_relations,
+            )
+            handlers.append(self.id_svc)
 
         handlers = super().get_relation_handlers(handlers)
         logger.debug(f"Relation handlers: {handlers}")
@@ -256,6 +381,10 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.peers.interface.state.joined = True
 
         self.set_leader_ready()
+        if self.leader_get("namespace-projects") is None:
+            self.leader_set(
+                {"namespace-projects": json.dumps(self.model.config.get("namespace-projects"))}
+            )
         self.manage_rgw_service(event)
         snap_chan = self.model.config.get("snap-channel")
 
@@ -335,16 +464,80 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             if error_already_exists not in e.stderr:
                 raise e
 
+    def remove_rgw_configs(self, event: ops.framework.EventBase) -> None:
+        """Remove RGW configs."""
+        if not self.unit.is_leader():
+            logger.debug("Not a leader unit, skipping setting rgw config")
+            return
+
+        configs = [
+            "rgw_keystone_url",
+            "rgw_keystone_admin_user",
+            "rgw_keystone_admin_password",
+            "rgw_keystone_api_version",
+            "rgw_keystone_admin_domain",
+            "rgw_keystone_admin_project",
+            "rgw_keystone_accepted_roles",
+            "rgw_keystone_accepted_admin_roles",
+            "rgw_keystone_token_cache_size",
+            "rgw_keystone_verify_ssl",
+            "rgw_keystone_service_token_enabled",
+            "rgw_keystone_service_token_accepted_roles",
+            "rgw_s3_auth_use_keystone",
+        ]
+
+        logger.info("Removing RGW Cluster configs")
+        microceph.delete_cluster_configs(configs)
+
+    def configure_rgw_service(self, event: ops.framework.EventBase) -> None:
+        """Configure RGW service."""
+        if not self.unit.is_leader():
+            logger.debug("Not a leader unit, skipping setting rgw config")
+            return
+
+        configs = {}
+        if self.id_svc.ready:
+            try:
+                configs = {
+                    "rgw_keystone_url": self.id_svc.interface.internal_auth_url.removesuffix("v3"),
+                    "rgw_keystone_admin_user": self.id_svc.interface.service_user_name,
+                    "rgw_keystone_admin_password": self.id_svc.interface.service_password,
+                    "rgw_keystone_api_version": "3",
+                    "rgw_keystone_admin_domain": self.id_svc.interface.service_domain_name,
+                    "rgw_keystone_admin_project": self.id_svc.interface.service_project_name,
+                    "rgw_keystone_accepted_roles": "Member,member",
+                    "rgw_keystone_accepted_admin_roles": self.id_svc.interface.admin_role,
+                    "rgw_keystone_token_cache_size": "500",
+                    "rgw_keystone_verify_ssl": str(False).lower(),
+                    "rgw_keystone_service_token_enabled": str(True).lower(),
+                    "rgw_keystone_service_token_accepted_roles": self.id_svc.interface.admin_role,
+                    "rgw_s3_auth_use_keystone": str(True).lower(),
+                }
+                logger.info("Updating RGW Cluster configs")
+                microceph.update_cluster_configs(configs)
+            except (AttributeError, KeyError) as e:
+                logger.warning(f"Not configuring rgw: {str(e)}")
+        else:
+            self.remove_rgw_configs(event)
+
     def manage_rgw_service(self, event: ops.framework.EventBase) -> None:
         """Enable/Disable RGW service."""
         try:
             enabled = microceph.is_rgw_enabled(gethostname())
+            logger.info(f"Microceph RGW enabled: {enabled}")
             if self.model.config.get("enable-rgw") == "*":
+                self.configure_rgw_service(event)
                 if not enabled:
+                    logger.info("Enabling RGW service")
                     microceph.enable_rgw()
             else:
                 if enabled:
+                    logger.info("Disabling RGW service")
                     microceph.disable_rgw()
+                self.remove_rgw_configs(event)
+
+            # Update traefik lb members
+            self.handle_traefik_ready(event)
         except ClusterServiceUnavailableException as e:
             logger.warning(str(e))
             event.defer()
@@ -376,6 +569,29 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                     event.fail()
                 return
             raise e
+
+    def _update_service_endpoints(self):
+        try:
+            if self.id_svc.update_service_endpoints:
+                logger.debug("Updating service endpoints after ingress relation changed")
+                self.id_svc.update_service_endpoints(self.service_endpoints)
+        except (AttributeError, KeyError) as e:
+            # Ignore AttributeError and KeyError as the exceptions are raised
+            # if integration with identity_service is not yet set.
+            logger.warning(f"Identity service relation not integrated: {str(e)}")
+
+    def handle_traefik_ready(self, event: ops.framework.EventBase):
+        """Handle Traefik route ready callback."""
+        if not self.unit.is_leader():
+            logger.debug("Not a leader unit, not updating traefik route config")
+            return
+
+        if self.traefik_route_rgw and self.traefik_route_rgw.interface.is_ready():
+            logger.debug("Sending traefik config for rgw interface")
+            self.traefik_route_rgw.interface.submit_to_traefik(config=self.traefik_config)
+
+            if self.traefik_route_rgw.ready:
+                self._update_service_endpoints()
 
 
 if __name__ == "__main__":  # pragma: no cover

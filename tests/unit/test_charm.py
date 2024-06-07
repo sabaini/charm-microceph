@@ -15,9 +15,10 @@
 """Tests for Microceph charm."""
 
 from subprocess import CalledProcessError
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, mock_open, patch
 
 import ops_sunbeam.test_utils as test_utils
+from ops.testing import Harness
 
 import charm
 import microceph
@@ -49,13 +50,62 @@ class TestCharm(test_utils.CharmTestCase):
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
 
+    def add_complete_identity_relation(self, harness: Harness) -> None:
+        """Add complete identity-service relation."""
+        credentials_content = {"username": "svcuser1", "password": "svcpass1"}
+        credentials_id = harness.add_model_secret("keystone", credentials_content)
+        app_data = {
+            "admin-domain-id": "admindomid1",
+            "admin-project-id": "adminprojid1",
+            "admin-user-id": "adminuserid1",
+            "api-version": "3",
+            "auth-host": "keystone.local",
+            "auth-port": "12345",
+            "auth-protocol": "http",
+            "internal-host": "keystone.internal",
+            "internal-port": "5000",
+            "internal-protocol": "http",
+            "internal-auth-url": "http://keystone.internal/v3",
+            "service-domain": "servicedom",
+            "service-domain_id": "svcdomid1",
+            "service-host": "keystone.service",
+            "service-port": "5000",
+            "service-protocol": "http",
+            "service-project": "svcproj1",
+            "service-project-id": "svcprojid1",
+            "service-credentials": credentials_id,
+        }
+
+        # Cannot use ops add_relation [1] directly due to secrets
+        # [1] https://ops.readthedocs.io/en/latest/#ops.testing.Harness.add_relation
+        rel_id = test_utils.add_base_identity_service_relation(harness)
+        harness.grant_secret(credentials_id, harness.charm.app.name)
+        harness.update_relation_data(rel_id, "keystone", app_data)
+
+    def add_complete_ingress_relation(self, harness: Harness) -> None:
+        """Add complete traefik-route relations."""
+        harness.add_relation(
+            "traefik-route-rgw",
+            "traefik",
+            app_data={"external_host": "dummy-ip", "scheme": "http"},
+        )
+
+    def add_complete_peer_relation(self, harness: Harness) -> None:
+        """Add complete peer relation data."""
+        harness.add_relation(
+            "peers", harness.charm.app.name, unit_data={"public-address": "dummy-ip"}
+        )
+
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
-    def test_all_relations(self, subprocess, cclient):
+    @patch("builtins.open", new_callable=mock_open, read_data="mon host dummy-ip")
+    def test_all_relations(self, mock_file, subprocess, cclient):
         """Test all the charms relations."""
         self.harness.set_leader()
         self.harness.update_config({"snap-channel": "1.0/stable"})
-        test_utils.add_complete_peer_relation(self.harness)
+        self.add_complete_peer_relation(self.harness)
+        self.add_complete_identity_relation(self.harness)
+        self.add_complete_ingress_relation(self.harness)
         cclient().cluster.list_services.return_value = []
         subprocess.run.assert_any_call(
             [
@@ -74,14 +124,25 @@ class TestCharm(test_utils.CharmTestCase):
             check=True,
             timeout=180,
         )
+        # Remove RGW configs when RGW is not enabled
+        # The function might be called more than one time as it is part of
+        # configure_charm and so assert any one removal of config instead
+        # of call count.
+        cclient.from_socket().cluster.delete_config.assert_any_call("rgw_keystone_url")
+
+        # Assert RGW update configs is not called
+        cclient.from_socket().cluster.update_config.assert_not_called()
 
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
-    def test_all_relations_with_enable_rgw_config(self, subprocess, cclient):
+    @patch("builtins.open", new_callable=mock_open, read_data="mon host dummy-ip")
+    def test_all_relations_with_enable_rgw_config(self, mock_file, subprocess, cclient):
         """Test all the charms relations."""
         self.harness.set_leader()
         self.harness.update_config({"snap-channel": "1.0/stable", "enable-rgw": "*"})
         test_utils.add_complete_peer_relation(self.harness)
+        self.add_complete_identity_relation(self.harness)
+        self.add_complete_ingress_relation(self.harness)
         cclient().cluster.list_services.return_value = []
         subprocess.run.assert_any_call(
             [
@@ -111,6 +172,8 @@ class TestCharm(test_utils.CharmTestCase):
             check=True,
             timeout=180,
         )
+        # Verify if update_config for RGW configs is called
+        self.assertEqual(cclient.from_socket().cluster.update_config.call_count, 13)
 
     @patch.object(microceph, "subprocess")
     @patch("ceph.check_output")
