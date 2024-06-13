@@ -71,6 +71,39 @@ function wait_for_microceph_bootstrap() {
     juju wait-for application microceph --query='name=="microceph" && (status=="active" || status=="idle")' --timeout=10m
 }
 
+function collect_microceph_logs() {
+    mkdir -p logs
+    local model=${1:-microceph-test}
+    # Replace slash with - in model name if any
+    local model_=${model/\//-}
+    juju status -m $model -o logs/$model_.yaml
+    juju debug-log -m $model --replay &> logs/$model_-debug-log.txt || echo "Not able to get logs for model $model"
+    juju ssh microceph/leader sudo microceph status &> logs/microceph-status.txt || true
+    juju ssh microceph/leader sudo microceph.ceph status &> logs/ceph-status.txt || true
+    cat logs/$model_.yaml
+    cat logs/microceph-status.txt
+}
+
+function collect_sunbeam_and_microceph_logs() {
+    mkdir -p logs
+    kubectl="microk8s.kubectl"
+    cp -rf $HOME/snap/openstack/common/logs/*.log logs/
+    models=$(juju models --format json | jq -r .models[].name)
+    for model in $models;
+    do
+      name=$(echo $model | cut -d/ -f2);
+      juju status -m $model -o logs/$name.yaml;
+      cat logs/$name.yaml;
+      juju debug-log -m $model --replay &> logs/$name-debug-log.txt || echo "Not able to get logs for model $model"
+      for pod in $(sudo $kubectl get pods -n $name -o=jsonpath='{.items[*].metadata.name}');
+      do
+        sudo $kubectl logs --ignore-errors -n $name --all-containers $pod &> logs/$pod.log || echo "Not able to get log for $pod"
+      done
+    done
+    juju ssh microceph/leader sudo microceph status &> logs/microceph-status.txt || true
+    juju ssh microceph/leader sudo microceph.ceph status &> logs/ceph-status.txt || true
+}
+
 run="${1}"
 shift
 

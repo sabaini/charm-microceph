@@ -112,6 +112,28 @@ jobs:
           ~/actionutils.sh wait_for_osds 3
           sudo microceph.ceph -s
 
+      - name: Enable RGW
+        run: |
+          set -eux
+          juju config microceph enable-rgw="*"
+          ~/actionutils.sh wait_for_rgw 1
+
+      - name: Collect logs
+        if: always()
+        run: ./tests/scripts/ci_helpers.sh collect_sunbeam_and_microceph_logs
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: microceph_juju_functional_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
+
   juju-cluster-test:
     needs:
       - lint
@@ -181,6 +203,22 @@ jobs:
             juju status
             exit 1
           fi
+
+      - name: Collect logs
+        if: always()
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: microceph_juju_cluster_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
 
   juju-single-test:
     needs:
@@ -368,6 +406,22 @@ jobs:
           juju wait-for application microceph --query='status=="blocked"'
           juju status
           juju status blocked | egrep '^microceph/.*Cannot upgrade.*to quincy/stable'
+
+      - name: Collect logs
+        if: always()
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: microceph_juju_upgrade_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
 
   juju-network-spaces-test:
     needs:

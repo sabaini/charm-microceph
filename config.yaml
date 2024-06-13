@@ -14,3 +14,10 @@ options:
       The default replication factor for pools. Note that changing
       this value only sets the default value; it doesn't change
       the replication factor for existing pools.
+  enable-rgw:
+    default: ""
+    type: string
+    description: |
+      Supported values for this option are
+      "*" - Enable RGW on all storage nodes
+      ""  - Disable RGW on all storage nodes

@@ -36,6 +36,7 @@ import ceph
 import cluster
 import microceph
 from ceph_broker import get_named_key
+from microceph_client import ClusterServiceUnavailableException
 from relation_handlers import (
     CephClientProviderHandler,
     CephMdsProviderHandler,
@@ -114,7 +115,16 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         self.configure_ceph(event)
 
     def _on_config_changed(self, event: ops.framework.EventBase) -> None:
-        self.configure_charm(event)
+        with sunbeam_guard.guard(self, "Checking configs"):
+            if not self.is_valid_placement_directive(self.model.config.get("enable-rgw")):
+                raise sunbeam_guard.BlockedExceptionError("Improper value for config enable-rgw")
+
+            self.configure_charm(event)
+
+    def is_valid_placement_directive(self, directive: str) -> bool:
+        """Check if placement directive is valid or not."""
+        supported_directives = ["*", ""]
+        return directive in supported_directives
 
     def _set_pool_size_action(self, event: ops.framework.EventBase) -> None:
         """Set the size for one or more pools."""
@@ -246,6 +256,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.peers.interface.state.joined = True
 
         self.set_leader_ready()
+        self.manage_rgw_service(event)
         snap_chan = self.model.config.get("snap-channel")
 
         if self.cluster_upgrades.upgrade_requested(snap_chan):
@@ -262,6 +273,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         super().configure_app_non_leader(event)
         if isinstance(event, MicroClusterNodeAddedEvent):
             self.cluster_nodes.join_node_to_cluster(event)
+
+        if self.peers.interface.state.joined:
+            self.manage_rgw_service(event)
 
     def _get_space_subnet(self, space: str):
         """Get the first available subnet in the network space."""
@@ -320,6 +334,23 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
             if error_already_exists not in e.stderr:
                 raise e
+
+    def manage_rgw_service(self, event: ops.framework.EventBase) -> None:
+        """Enable/Disable RGW service."""
+        try:
+            enabled = microceph.is_rgw_enabled(gethostname())
+            if self.model.config.get("enable-rgw") == "*":
+                if not enabled:
+                    microceph.enable_rgw()
+            else:
+                if enabled:
+                    microceph.disable_rgw()
+        except ClusterServiceUnavailableException as e:
+            logger.warning(str(e))
+            event.defer()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning(e.stderr)
+            raise e
 
     def configure_ceph(self, event) -> None:
         """Configure Ceph."""
