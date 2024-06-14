@@ -80,8 +80,10 @@ function collect_microceph_logs() {
     juju debug-log -m $model --replay &> logs/$model_-debug-log.txt || echo "Not able to get logs for model $model"
     juju ssh microceph/leader sudo microceph status &> logs/microceph-status.txt || true
     juju ssh microceph/leader sudo microceph.ceph status &> logs/ceph-status.txt || true
+    juju ssh microceph/leader sudo ceph osd pool ls detail &> logs/ceph-pools.txt || true
     cat logs/$model_.yaml
     cat logs/microceph-status.txt
+    cat logs/ceph-pools.txt
 }
 
 function collect_sunbeam_and_microceph_logs() {
