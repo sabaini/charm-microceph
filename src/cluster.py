@@ -70,6 +70,10 @@ class ClusterNodes(ops.framework.Object):
             event.defer()
             return
 
+        if self.charm.peers.interface.state.joined is True:
+            logger.info("Unit has already joined the cluster")
+            return
+
         try:
             microceph.join_cluster(token=token, **self.charm._get_bootstrap_params())
             self.charm.peers.interface.state.joined = True
