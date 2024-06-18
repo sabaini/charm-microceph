@@ -273,9 +273,11 @@ def can_upgrade_snap(current, new: str) -> bool:
     return newer
 
 
-def set_pool_size(pools, size):
+def set_pool_size(pools: str, size: int):
     """Set the size for one or more pools."""
-    cmd = ["sudo", "microceph", "pool", "set-rf", "--size", str(size), pools]
+    pools_list = pools.split(",")
+    cmd = ["sudo", "microceph", "pool", "set-rf", "--size", str(size)]
+    cmd.extend(pools_list)
     _run_cmd(cmd)
 
 
