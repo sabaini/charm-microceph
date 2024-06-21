@@ -33,6 +33,14 @@ provides:
   mds:
     interface: ceph-mds
 
+requires:
+  traefik-route-rgw:
+    interface: traefik_route
+    optional: true
+  identity-service:
+    interface: keystone
+    optional: true
+
 peers:
   peers:
     interface: ceph-peer

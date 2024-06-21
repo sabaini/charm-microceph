@@ -24,7 +24,7 @@ from typing import Tuple
 
 import requests
 
-from microceph_client import Client
+from microceph_client import Client, UnrecognizedClusterConfigOption
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,49 @@ def is_rgw_enabled(hostname: str) -> bool:
             return True
 
     return False
+
+
+def list_cluster_configs():
+    """List all cluster configs.
+
+    Raises ClusterServiceUnavailableException
+    """
+    client = Client.from_socket()
+    configs = client.cluster.get_config()
+    return {config.get("key"): config.get("value") for config in configs}
+
+
+def update_cluster_configs(configs: dict):
+    """Update cluster configs.
+
+    Raises ClusterServiceUnavailableException, UnrecognizedClusterConfigOption
+    """
+    client = Client.from_socket()
+    configs_from_db = list_cluster_configs()
+    for key, value in configs.items():
+        if key in configs_from_db and value == configs_from_db.get(key):
+            continue
+
+        try:
+            logger.debug(f"Setting microceph cluster config {key}")
+            client.cluster.update_config(key, value)
+        except UnrecognizedClusterConfigOption:
+            raise UnrecognizedClusterConfigOption(f"Option {key} not recognized by microceph")
+
+
+def delete_cluster_configs(configs: list):
+    """Delete cluster configs.
+
+    Raises ClusterServiceUnavailableException
+    """
+    client = Client.from_socket()
+    for key in configs:
+        try:
+            logger.debug(f"Removing microceph cluster config {key}")
+            client.cluster.delete_config(key)
+        except UnrecognizedClusterConfigOption:
+            # If the key is not recognised by ceph/microceph just ignore.
+            logger.warning(f"Option {key} not recognized by microceph")
 
 
 def bootstrap_cluster(micro_ip: str = None, public_net: str = None, cluster_net: str = None):

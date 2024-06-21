@@ -20,9 +20,10 @@ module can be used to manage microceph cluster. All the operations
 on microceph can be performed using this module.
 """
 
+import json
 import logging
 from abc import ABC
-from typing import List
+from typing import Any, List
 from urllib.parse import quote
 
 import requests_unixsocket
@@ -53,6 +54,12 @@ class CephServiceNotFoundException(RemoteException):
     pass
 
 
+class UnrecognizedClusterConfigOption(RemoteException):
+    """Raised when config option is not found."""
+
+    pass
+
+
 class BaseService(ABC):
     """BaseService is the base service class for microclusterd services."""
 
@@ -71,7 +78,7 @@ class BaseService(ABC):
         self.__session = session
         self._endpoint = endpoint
 
-    def _request(self, method, path, **kwargs):
+    def _request(self, method, path, **kwargs):  # noqa: C901
         if path.startswith("/"):
             path = path[1:]
         netloc = self._endpoint
@@ -100,21 +107,25 @@ class BaseService(ABC):
                 raise ClusterServiceUnavailableException("Microceph Cluster not initialized")
             elif 'failed to remove service from db "rgw": Service not found' in error:
                 raise CephServiceNotFoundException("RGW Service not found")
+            elif "Error EINVAL: unrecognized config option" in error:
+                raise UnrecognizedClusterConfigOption("Option not found")
+            elif "Error EINVAL: unrecognized config target" in error:
+                raise UnrecognizedClusterConfigOption("Option not found")
             else:
                 raise e
 
         return response.json()
 
-    def _get(self, path, **kwargs):
+    def _get(self, path, data=None, **kwargs):
         kwargs.setdefault("allow_redirects", True)
-        return self._request("get", path, **kwargs)
+        return self._request("get", path, data=data, **kwargs)
 
     def _head(self, path, **kwargs):
         kwargs.setdefault("allow_redirects", False)
         return self._request("head", path, **kwargs)
 
-    def _post(self, path, data=None, json=None, **kwargs):
-        return self._request("post", path, data=data, json=json, **kwargs)
+    def _post(self, path, data=None, **kwargs):
+        return self._request("post", path, data=data, **kwargs)
 
     def _patch(self, path, data=None, **kwargs):
         return self._request("patch", path, data=data, **kwargs)
@@ -122,8 +133,8 @@ class BaseService(ABC):
     def _put(self, path, data=None, **kwargs):
         return self._request("put", path, data=data, **kwargs)
 
-    def _delete(self, path, **kwargs):
-        return self._request("delete", path, **kwargs)
+    def _delete(self, path, data=None, **kwargs):
+        return self._request("delete", path, data=data, **kwargs)
 
     def _options(self, path, **kwargs):
         kwargs.setdefault("allow_redirects", True)
@@ -168,7 +179,26 @@ class ClusterService(BaseService):
     of using microceph cli subprocess.
     """
 
-    def list_services(self) -> List[str]:
+    def list_services(self) -> List[dict]:
         """List all services."""
         services = self._get("/1.0/services")
         return services.get("metadata")
+
+    def get_config(self, key: str | None = None) -> List[dict]:
+        """Get value of the config parameter.
+
+        If key is not specified, returns all the configs from microceph.
+        """
+        data = {"key": key}
+        configs = self._get("/1.0/configs", data=json.dumps(data))
+        return configs.get("metadata")
+
+    def update_config(self, key: str, value: Any):
+        """Update configuration in database, create if missing."""
+        data = {"key": key, "value": value, "wait": True}
+        self._put("/1.0/configs", data=json.dumps(data))
+
+    def delete_config(self, key: str):
+        """Delete configuration in database if exists."""
+        data = {"key": key, "wait": True}
+        self._delete("/1.0/configs", data=json.dumps(data))
