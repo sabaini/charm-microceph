@@ -389,6 +389,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         return {
             "auth": "cephx",
             "ceph-public-address": self._lookup_system_interfaces(public_addrs),
+            "ceph-public-addresses": public_addrs,
             "key": get_named_key(name=service_name, caps=caps),
         }
 
