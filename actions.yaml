@@ -32,3 +32,6 @@ set-pool-size:
   required:
     - pools
     - size
+get-rgw-endpoints:
+  description: |
+    S3 and swift public endpoints for Rados Gateway.

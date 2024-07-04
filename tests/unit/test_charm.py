@@ -684,3 +684,39 @@ class TestCharm(test_utils.CharmTestCase):
         mock_get_snap_tracks.return_value = {"zoidberg", "alphaville", "pyjama"}
         result = microceph.can_upgrade_snap("squid", "pyjama")
         self.assertTrue(result)
+
+    def test_get_rgw_endpoints_action_node_not_bootstrapped(self):
+        """Test action get_rgw_endpoints when node not bootstrapped."""
+        test_utils.add_complete_peer_relation(self.harness)
+
+        action_event = MagicMock()
+        self.harness.charm.rgw._get_rgw_endpoints_action(action_event)
+        action_event.set_results.assert_called_with(
+            {"message": "Rados gateway endpoints are not set yet"}
+        )
+        action_event.fail.assert_called()
+
+    @patch.object(microceph, "Client")
+    @patch.object(microceph, "subprocess")
+    @patch("builtins.open", new_callable=mock_open, read_data="mon host dummy-ip")
+    def test_get_rgw_endpoints_action_after_traefik_is_integrated(
+        self, mock_file, subprocess, cclient
+    ):
+        """Test action get_rgw_endpoints after traefik is integrated."""
+        cclient.from_socket().cluster.list_services.return_value = []
+        self.harness.set_leader()
+        self.harness.update_config(
+            {"snap-channel": "1.0/stable", "enable-rgw": "*", "namespace-projects": True}
+        )
+        test_utils.add_complete_peer_relation(self.harness)
+        self.add_complete_identity_relation(self.harness)
+        self.add_complete_ingress_relation(self.harness)
+
+        action_event = MagicMock()
+        self.harness.charm.rgw._get_rgw_endpoints_action(action_event)
+        expected_endpoints = {
+            "swift": "http://dummy-ip/swift/v1/AUTH_$(project_id)s",
+            "s3": "http://dummy-ip",
+        }
+        action_event.set_results.assert_called_with(expected_endpoints)
+        action_event.fail.assert_not_called()

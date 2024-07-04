@@ -39,6 +39,7 @@ import cluster
 import microceph
 from ceph_broker import get_named_key
 from microceph_client import ClusterServiceUnavailableException
+from radosgw import RadosGWHandler
 from relation_handlers import (
     CephClientProviderHandler,
     CephMdsProviderHandler,
@@ -70,6 +71,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         self.storage = StorageHandler(self)
         self.cluster_nodes = cluster.ClusterNodes(self)
         self.cluster_upgrades = cluster.ClusterUpgrades(self)
+        self.rgw = RadosGWHandler(self)
 
         # Initialise handlers for events.
         self.framework.observe(self.on.install, self._on_install)
