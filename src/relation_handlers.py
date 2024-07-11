@@ -558,7 +558,7 @@ class CephClientProvides(Object):
             # Relation has disappeared so skip send of data
             return
 
-        # Place this key (if it exists) in the applicaton data bag.
+        # Place this key (if it exists) in the application data bag.
         mon_key = 'ceph-mon-public-addresses'
         mon_addrs = data.pop(mon_key, None)
         if mon_addrs is not None and self.model.unit.is_leader():
