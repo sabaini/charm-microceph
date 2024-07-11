@@ -559,7 +559,7 @@ class CephClientProvides(Object):
             return
 
         # Place this key (if it exists) in the application data bag.
-        mon_key = 'ceph-mon-public-addresses'
+        mon_key = "ceph-mon-public-addresses"
         mon_addrs = data.pop(mon_key, None)
         if mon_addrs is not None and self.model.unit.is_leader():
             relation.data[self.model.application][mon_key] = str(mon_addrs)
