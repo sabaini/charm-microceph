@@ -382,16 +382,25 @@ jobs:
         run: |
           set -eux
           date
-          juju config microceph snap-channel=reef/candidate
+          target="reef/stable"
+          juju config microceph snap-channel=$target
           sleep 60
           # Initial wait
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m || true
           # Get status
           juju ssh microceph/0 -- sudo ceph -s
+          juju ssh microceph/0 -- sudo microceph cluster list
           juju status
           # Fail if goal status not reached
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
           date
+          # Test if we have expected snap releases
+          juju exec -a microceph -- sudo snap info microceph
+          cnt=$( juju exec -a microceph -- sudo snap info microceph | egrep "^tracking:" | fgrep -c $target )
+          if [[ "$cnt" -ne "3" ]] ; then
+            echo "Fail: expected 3 nodes at $target, got $cnt"
+            exit -1
+          fi
 
       - name: Test the set-pool-size action
         run: |
