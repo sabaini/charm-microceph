@@ -78,7 +78,8 @@ def is_cluster_member(hostname: str) -> bool:
         return hostname in str(output)
     except subprocess.CalledProcessError as e:
         error_not_initialised = "Daemon not yet initialized"
-        if error_not_initialised in e.stderr:
+        error_db_not_initialised = "Database is not yet initialized"
+        if error_not_initialised in e.stderr or error_db_not_initialised in e.stderr:
             # not a cluster member if daemon not initialised.
             return False
         else:

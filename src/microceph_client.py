@@ -103,7 +103,7 @@ class BaseService(ABC):
             # Do some nice translating to microcephd exceptions
             error = response.json().get("error")
             LOG.warning(error)
-            if "Daemon not yet initialized" in error:
+            if "Daemon not yet initialized" in error or "Database is not yet initialized" in error:
                 raise ClusterServiceUnavailableException("Microceph Cluster not initialized")
             elif 'failed to remove service from db "rgw": Service not found' in error:
                 raise CephServiceNotFoundException("RGW Service not found")
