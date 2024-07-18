@@ -547,7 +547,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                     "rgw_keystone_admin_domain": self.id_svc.interface.service_domain_name,
                     "rgw_keystone_admin_project": self.id_svc.interface.service_project_name,
                     "rgw_keystone_accepted_roles": "Member,member",
-                    "rgw_keystone_accepted_admin_roles": self.id_svc.interface.admin_role,
+                    "rgw_keystone_accepted_admin_roles": f"{self.id_svc.interface.admin_role},ResellerAdmin",
                     "rgw_keystone_token_cache_size": "500",
                     "rgw_keystone_service_token_enabled": str(True).lower(),
                     "rgw_keystone_service_token_accepted_roles": self.id_svc.interface.admin_role,
