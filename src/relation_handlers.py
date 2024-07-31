@@ -562,7 +562,7 @@ class CephClientProvides(Object):
         mon_key = "ceph-mon-public-addresses"
         mon_addrs = data.pop(mon_key, None)
         if mon_addrs is not None and self.model.unit.is_leader():
-            relation.data[self.model.application][mon_key] = str(mon_addrs)
+            relation.data[self.model.app][mon_key] = str(mon_addrs)
 
         for k, v in data.items():
             relation.data[self.this_unit][k] = str(v)
