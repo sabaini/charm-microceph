@@ -193,9 +193,9 @@ class ClusterService(BaseService):
         configs = self._get("/1.0/configs", data=json.dumps(data))
         return configs.get("metadata")
 
-    def update_config(self, key: str, value: Any):
+    def update_config(self, key: str, value: Any, skip_restart: bool = False):
         """Update configuration in database, create if missing."""
-        data = {"key": key, "value": value, "wait": True}
+        data = {"key": key, "value": value, "wait": True, "skip_restart": skip_restart}
         self._put("/1.0/configs", data=json.dumps(data))
 
     def delete_config(self, key: str):

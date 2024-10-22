@@ -117,15 +117,21 @@ def update_cluster_configs(configs: dict):
     """
     client = Client.from_socket()
     configs_from_db = list_cluster_configs()
-    for key, value in configs.items():
-        if key in configs_from_db and value == configs_from_db.get(key):
-            continue
 
+    def set_config(key, value, skip_restart):
+        if key in configs_from_db and value == configs_from_db.get(key):
+            return
         try:
             logger.debug(f"Setting microceph cluster config {key}")
-            client.cluster.update_config(key, value)
+            client.cluster.update_config(key, value, skip_restart)
         except UnrecognizedClusterConfigOption:
             raise UnrecognizedClusterConfigOption(f"Option {key} not recognized by microceph")
+
+    # Set config, but restart only on the last item
+    items = sorted(configs.items())
+    for key, value in items[:-1]:
+        set_config(key, value, skip_restart=True)
+    set_config(items[-1][0], items[-1][1], skip_restart=False)
 
 
 def delete_cluster_configs(configs: list):

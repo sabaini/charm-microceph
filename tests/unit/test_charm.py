@@ -252,7 +252,7 @@ class TestCharm(test_utils.CharmTestCase):
         # Check config rgw_keystone_verify_ssl is updated since certificate
         # transfer relation is set
         cclient.from_socket().cluster.update_config.assert_any_call(
-            "rgw_keystone_verify_ssl", str(True).lower()
+            "rgw_keystone_verify_ssl", str(True).lower(), True
         )
 
     @patch.object(microceph, "Client")
@@ -307,13 +307,13 @@ class TestCharm(test_utils.CharmTestCase):
         # Check config rgw_swift_account_in_url is updated since
         # namespace-projects is set to True.
         cclient.from_socket().cluster.update_config.assert_any_call(
-            "rgw_swift_account_in_url", str(True).lower()
+            "rgw_swift_account_in_url", str(True).lower(), True
         )
 
         # Check config rgw_keystone_verify_ssl is updated since certificate
         # transfer relation is set
         cclient.from_socket().cluster.update_config.assert_any_call(
-            "rgw_keystone_verify_ssl", str(True).lower()
+            "rgw_keystone_verify_ssl", str(True).lower(), True
         )
 
     @patch.object(microceph, "Client")
@@ -366,13 +366,13 @@ class TestCharm(test_utils.CharmTestCase):
         # Check config rgw_swift_account_in_url is updated since
         # namespace-projects is set to True.
         cclient.from_socket().cluster.update_config.assert_any_call(
-            "rgw_swift_account_in_url", str(True).lower()
+            "rgw_swift_account_in_url", str(True).lower(), True
         )
 
         # Check config rgw_keystone_verify_ssl is updated since certificate
         # transfer relation is set
         cclient.from_socket().cluster.update_config.assert_any_call(
-            "rgw_keystone_verify_ssl", str(False).lower()
+            "rgw_keystone_verify_ssl", str(False).lower(), True
         )
 
     @patch.object(microceph, "subprocess")
