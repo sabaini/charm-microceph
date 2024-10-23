@@ -65,7 +65,7 @@ class TestMicroCeph(unittest.TestCase):
         microceph.update_cluster_configs(configs_to_update)
 
         cclient.from_socket().cluster.update_config.assert_called_with(
-            "rgw_keystone_url", "http://dummy-ip"
+            "rgw_keystone_url", "http://dummy-ip", False
         )
 
     @patch("microceph.Client")
