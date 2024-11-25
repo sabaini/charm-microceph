@@ -197,6 +197,7 @@ class TestCharm(test_utils.CharmTestCase):
         # Assert RGW update configs is not called
         cclient.from_socket().cluster.update_config.assert_not_called()
 
+    @patch("relation_handlers.Client", MagicMock())
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
     @patch.object(Path, "chmod")
@@ -255,6 +256,7 @@ class TestCharm(test_utils.CharmTestCase):
             "rgw_keystone_verify_ssl", str(True).lower(), True
         )
 
+    @patch("relation_handlers.Client", MagicMock())
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
     @patch.object(Path, "chmod")
@@ -316,6 +318,7 @@ class TestCharm(test_utils.CharmTestCase):
             "rgw_keystone_verify_ssl", str(True).lower(), True
         )
 
+    @patch("relation_handlers.Client", MagicMock())
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
     @patch.object(Path, "chmod")
@@ -696,6 +699,7 @@ class TestCharm(test_utils.CharmTestCase):
         )
         action_event.fail.assert_called()
 
+    @patch("relation_handlers.Client", MagicMock())
     @patch.object(microceph, "Client")
     @patch.object(microceph, "subprocess")
     @patch("builtins.open", new_callable=mock_open, read_data="mon host dummy-ip")
