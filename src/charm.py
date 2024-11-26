@@ -32,6 +32,7 @@ import ops.framework
 import ops_sunbeam.charm as sunbeam_charm
 import ops_sunbeam.guard as sunbeam_guard
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
+import requests
 from ops.main import main
 
 import ceph
@@ -390,7 +391,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Update ceph info from configuration."""
         # public address should be updated once config public-network is supported
         client = microceph_client.Client.from_socket()
-        public_addrs = client.cluster.get_mon_addresses()
+        try:
+            public_addrs = client.cluster.get_mon_addresses()
+        except requests.HTTPError:
+            logger.debug("Mon api call failed, fall back to legacy method")
+            public_addrs = microceph.get_mon_public_addresses()
         return {
             "auth": "cephx",
             "ceph-public-address": self._lookup_system_interfaces(public_addrs),

@@ -23,11 +23,13 @@ import json
 import logging
 from typing import Callable, Dict, List, Optional, Tuple
 
+import requests
 from ops.charm import CharmBase, RelationEvent
 from ops.framework import EventBase, EventSource, Handle, Object, ObjectEvents, StoredState
 from ops_sunbeam.interfaces import OperatorPeers
 from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
 
+import microceph
 from ceph import get_osd_count
 from ceph_broker import Capabilities
 from ceph_broker import is_leader as is_ceph_mon_leader
@@ -578,7 +580,12 @@ class CephClientProvides(Object):
             return
         mon_key = "ceph-mon-public-addresses"
         client = Client.from_socket()
-        addrs = client.cluster.get_mon_addresses()
+        try:
+            addrs = client.cluster.get_mon_addresses()
+        except requests.HTTPError:
+            logger.debug("Mon api call failed, fall back to legacy method")
+            addrs = microceph.get_mon_public_addresses()
+
         for relation in self.framework.model.relations[self.relation_name]:
             relation.data[self.model.app][mon_key] = json.dumps(addrs)
 
