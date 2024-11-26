@@ -421,8 +421,7 @@ class CephClientProvides(Object):
         self.framework.observe(
             charm.on[self.relation_name].relation_changed, self._on_relation_changed
         )
-        # React to ceph peers relation events
-        self.framework.observe(charm.on["peers"].relation_changed, self._on_ceph_peers)
+        # React to ceph peers relation departed
         self.framework.observe(charm.on["peers"].relation_departed, self._on_ceph_peers)
 
     def _on_relation_changed(self, event):
