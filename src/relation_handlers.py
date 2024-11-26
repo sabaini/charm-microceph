@@ -23,15 +23,18 @@ import json
 import logging
 from typing import Callable, Dict, List, Optional, Tuple
 
+import requests
 from ops.charm import CharmBase, RelationEvent
 from ops.framework import EventBase, EventSource, Handle, Object, ObjectEvents, StoredState
 from ops_sunbeam.interfaces import OperatorPeers
 from ops_sunbeam.relation_handlers import BasePeerHandler, RelationHandler
 
+import microceph
 from ceph import get_osd_count
 from ceph_broker import Capabilities
 from ceph_broker import is_leader as is_ceph_mon_leader
 from ceph_broker import process_requests
+from microceph_client import Client
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +421,8 @@ class CephClientProvides(Object):
         self.framework.observe(
             charm.on[self.relation_name].relation_changed, self._on_relation_changed
         )
+        # React to ceph peers relation departed
+        self.framework.observe(charm.on["peers"].relation_departed, self._on_ceph_peers)
 
     def _on_relation_changed(self, event):
         """Prepare relation for data from requiring side."""
@@ -567,6 +572,22 @@ class CephClientProvides(Object):
         for k, v in data.items():
             relation.data[self.this_unit][k] = str(v)
 
+    def _on_ceph_peers(self, _event):
+        """Handle ceph peers relation events."""
+        # Mon addrs might have changed, update the relation data
+        if not self.model.unit.is_leader():
+            return
+        mon_key = "ceph-mon-public-addresses"
+        client = Client.from_socket()
+        try:
+            addrs = client.cluster.get_mon_addresses()
+        except requests.HTTPError:
+            logger.debug("Mon api call failed, fall back to legacy method")
+            addrs = microceph.get_mon_public_addresses()
+
+        for relation in self.framework.model.relations[self.relation_name]:
+            relation.data[self.model.app][mon_key] = json.dumps(addrs)
+
 
 class CephClientProviderHandler(RelationHandler):
     """Handler for ceph client relation."""
@@ -638,6 +659,11 @@ class CephClientProviderHandler(RelationHandler):
             data,
         )
         # Ignore the callback function??
+
+    def notify_all(self):
+        """Notify clients of a change."""
+        for relation in self.charm.framework.model.relations[self.relation_name]:
+            relation.data[self.charm.framework.model.unit].clear()
 
 
 class CephRadosGWProviderHandler(CephClientProviderHandler):
