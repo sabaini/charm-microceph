@@ -239,6 +239,9 @@ def remove_disk_cmd(osd_num: int, force: bool = False) -> None:
         # The flag below prevents automatic scaledown of failure domain to OSD
         # as it makes the storage cluster unsafe against host failures.
         cmd.append("--prohibit-crush-scaledown")
+    else:
+        # This isn't always needed, but it doesn't hurt to set it.
+        cmd.append("--confirm-failure-domain-downgrade")
     _run_cmd(cmd)
 
 
