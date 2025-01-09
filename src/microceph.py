@@ -239,6 +239,11 @@ def remove_disk_cmd(osd_num: int, force: bool = False) -> None:
         # The flag below prevents automatic scaledown of failure domain to OSD
         # as it makes the storage cluster unsafe against host failures.
         cmd.append("--prohibit-crush-scaledown")
+    else:
+        # In Microceph, operators need to specify this flag manually. On Juju,
+        # and thus, the charms, we need a more hands-off approach, and so
+        # failure domains changes are enabled by default.
+        cmd.append("--confirm-failure-domain-downgrade")
     _run_cmd(cmd)
 
 
