@@ -317,7 +317,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 "identity-service" in self.mandatory_relations,
             )
             handlers.append(self.id_svc)
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to get identity-service handler")
 
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
