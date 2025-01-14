@@ -303,6 +303,23 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         }
         return config
 
+    def _add_idsvc_handler(self, handlers):
+        if not self.can_add_handler("identity-service", handlers):
+            return
+
+        try:
+            self.id_svc = sunbeam_rhandlers.IdentityServiceRequiresHandler(
+                self,
+                "identity-service",
+                self.configure_charm,
+                self.service_endpoints,
+                self.model.config["region"],
+                "identity-service" in self.mandatory_relations,
+            )
+            handlers.append(self.id_svc)
+        except Exception:
+            logger.exception("Failed to get identity-service handler")
+
     def get_relation_handlers(self, handlers=None) -> List[sunbeam_rhandlers.RelationHandler]:
         """Relation handlers for the service."""
         handlers = handlers or []
@@ -334,16 +351,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 "traefik-route-rgw" in self.mandatory_relations,
             )
             handlers.append(self.traefik_route_rgw)
-        if self.can_add_handler("identity-service", handlers):
-            self.id_svc = sunbeam_rhandlers.IdentityServiceRequiresHandler(
-                self,
-                "identity-service",
-                self.configure_charm,
-                self.service_endpoints,
-                self.model.config["region"],
-                "identity-service" in self.mandatory_relations,
-            )
-            handlers.append(self.id_svc)
+        self._add_idsvc_handler(handlers)
 
         handlers = super().get_relation_handlers(handlers)
         logger.debug(f"Relation handlers: {handlers}")
