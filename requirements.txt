@@ -1,12 +1,12 @@
 cryptography
-ops==2.15
+ops
 pyroute2
 netifaces
 jsonschema
 tenacity
 jinja2
 requests<2.32 # https://github.com/psf/requests/issues/6707 (similar issue with http+unix)
-git+https://opendev.org/openstack/sunbeam-charms/@471e8b9f81c669b2ff2e10c4727e2a4d4bbc28b1#egg=ops-sunbeam&subdirectory=ops-sunbeam
+git+https://opendev.org/openstack/sunbeam-charms#egg=ops-sunbeam&subdirectory=ops-sunbeam
 
 # Used for communication with snapd socket
 requests-unixsocket # Apache 2

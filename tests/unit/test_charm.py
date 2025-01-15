@@ -68,8 +68,13 @@ class TestCharm(test_utils.CharmTestCase):
         super().setUp(charm, self.PATCHES)
         with open("config.yaml", "r") as f:
             config_data = f.read()
+        with open("metadata.yaml", "r") as f:
+            metadata = f.read()
         self.harness = test_utils.get_harness(
-            _MicroCephCharm, container_calls=self.container_calls, charm_config=config_data
+            _MicroCephCharm,
+            container_calls=self.container_calls,
+            charm_config=config_data,
+            charm_metadata=metadata,
         )
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
