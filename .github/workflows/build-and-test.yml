@@ -852,3 +852,78 @@ jobs:
         if: ${{ failure() && runner.debug }}
         uses: canonical/action-tmate@main
 
+  cos-integration-test:
+    needs:
+      - lint
+      - unit-test
+      - build
+    name: Charm MicroCeph COS integration test
+    runs-on: [self-hosted, xlarge, linux, amd64]
+    steps:
+      - name: Download charm
+        uses: actions/download-artifact@v4
+        with:
+          name: charms
+          path: ~/artifacts/
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup LXD
+        uses: canonical/setup-lxd@v0.1.1
+        with:
+          # pin lxd to LTS release.
+          channel: 5.21/stable
+
+      - name: Install dependencies
+        run: |
+          ./tests/scripts/ci_helpers.sh install_deps
+          sudo snap install microk8s --channel 1.32-strict/stable
+
+      - name: Cleanup Docker
+        run: ./tests/scripts/ci_helpers.sh cleanup_docker
+
+      - name: Bootstrap K8s
+        run: ./tests/scripts/ci_helpers.sh bootstrap_k8s
+
+      - name: Bootstrap k8s controller
+        run: ./tests/scripts/ci_helpers.sh bootstrap_k8s_controller
+
+      - name: Deploy cos lite
+        run: ./tests/scripts/ci_helpers.sh deploy_cos
+
+      - name: Deploy cos lite
+        run: ./tests/scripts/ci_helpers.sh check_http_endpoints_up
+      
+      - name: Deploy MicroCeph charm over LXD
+        run: ./tests/scripts/ci_helpers.sh deploy_microceph
+
+      - name: Deploy and Integrate grafana-agent
+        run: ./tests/scripts/ci_helpers.sh deploy_grafana_agent
+
+      - name: Test Metrics and Dashboards
+        run: ./tests/scripts/ci_helpers.sh verify_o11y_services
+          
+      - name: Show Juju status
+        run: |
+          set -eux
+          juju status
+
+      - name: Collect logs
+        if: failure()
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs || true
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microceph_juju_storage_cluster_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
+
