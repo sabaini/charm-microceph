@@ -155,3 +155,19 @@ class TestMicroCeph(unittest.TestCase):
         ]
         assert "rgw_keystone_url" in configs_deleted
         assert "rgw_keystone_accepted_roles" in configs_deleted
+
+    @patch("microceph._run_cmd")
+    @patch("microceph.gethostname")
+    def test_join_cluster(self, gethn, run_cmd):
+        """Test if cluster join is idempotent."""
+        gethn.return_value = "host"
+        run_cmd.return_value = "long status that contains host"
+        microceph.join_cluster("token", "10.10.10.10")
+        run_cmd.assert_called_with(["microceph", "status"])
+
+        # status command will not contain hostname.
+        run_cmd.return_value = ""
+        microceph.join_cluster("token", "10.10.10.10")
+        run_cmd.assert_called_with(
+            cmd=["microceph", "cluster", "join", "token", "--microceph-ip", "10.10.10.10"]
+        )
