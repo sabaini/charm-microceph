@@ -69,8 +69,6 @@ def is_ready() -> bool:
 
 def cos_agent_refresh_cb(event):
     """Callback for cos-agent relation change."""
-    logger.info("Entered CEPH COS AGENT REFRESH")
-
     if not is_ready():
         logger.debug("not bootstrapped, defer _on_refresh: %s", event)
         event.defer()
