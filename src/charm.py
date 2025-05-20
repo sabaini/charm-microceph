@@ -458,11 +458,17 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     def configure_app_non_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the non leader unit."""
         super().configure_app_non_leader(event)
+
+        # MicroClusterNodeAddedEvent triggered only when token is present.
         if isinstance(event, MicroClusterNodeAddedEvent):
             self.cluster_nodes.join_node_to_cluster(event)
 
-        if self.peers.interface.state.joined:
-            self.manage_rgw_service(event)
+        if not self.peers.interface.state.joined:
+            # deferral not needed as join token is not yet received. 
+            raise sunbeam_guard.WaitingExceptionError("waiting to join cluster")
+
+        # Proceed with post join activities
+        self.manage_rgw_service(event)
 
     def _get_space_subnet(self, space: str):
         """Get the first available subnet in the network space."""
