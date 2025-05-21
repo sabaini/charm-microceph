@@ -432,6 +432,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def configure_app_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the leader unit."""
+        logger.debug(f"Configure leader for {event.__repr__}")
         if not self.is_leader_ready():
             logger.debug("Bootstrapping MicroCeph cluster")
             self.bootstrap_cluster(event)
@@ -461,9 +462,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Configure the non leader unit."""
         super().configure_app_non_leader(event)
 
+        logger.debug(f"Configure non leader for {event.__repr__}")
         # MicroClusterNodeAddedEvent triggered only when token is present.
         if isinstance(event, MicroClusterNodeAddedEvent):
-            logger.debug(f"Adding {event.unit.name} to cluster.")
             self.cluster_nodes.join_node_to_cluster(event)
 
         if not self.peers.interface.state.joined:
