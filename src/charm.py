@@ -464,7 +464,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.cluster_nodes.join_node_to_cluster(event)
 
         if not self.peers.interface.state.joined:
-            # deferral not needed as join token is not yet received. 
+            # deferral not needed as join token is not yet received.
             raise sunbeam_guard.WaitingExceptionError("waiting to join cluster")
 
         # Proceed with post join activities
@@ -522,7 +522,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
             if error_socket_not_exists in e.stderr:
                 event.defer()
-                return
+                raise sunbeam_guard.WaitingExceptionError("waiting for snap")
 
             if error_already_exists not in e.stderr:
                 raise e
