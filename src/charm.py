@@ -433,6 +433,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
     def configure_app_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the leader unit."""
         if not self.is_leader_ready():
+            logger.debug("Bootstrapping MicroCeph cluster")
             self.bootstrap_cluster(event)
             # mark bootstrap node also as joined
             self.peers.interface.state.joined = True
@@ -453,6 +454,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.cluster_upgrades.init_upgrade(snap_chan)
 
         if isinstance(event, MicroClusterNewNodeEvent):
+            logger.debug(f"Generating join token for {event.unit.name}")
             self.cluster_nodes.add_node_to_cluster(event)
 
     def configure_app_non_leader(self, event: ops.framework.EventBase) -> None:
@@ -461,6 +463,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         # MicroClusterNodeAddedEvent triggered only when token is present.
         if isinstance(event, MicroClusterNodeAddedEvent):
+            logger.debug(f"Adding {event.unit.name} to cluster.")
             self.cluster_nodes.join_node_to_cluster(event)
 
         if not self.peers.interface.state.joined:
@@ -515,6 +518,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Bootstrap microceph cluster."""
         try:
             microceph.bootstrap_cluster(**self._get_bootstrap_params())
+            logger.debug(f"Successfully bootstrapped with params {self._get_bootstrap_params()}")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             error_already_exists = "Unable to initialize cluster: Database is online"
