@@ -71,12 +71,14 @@ class ClusterNodes(ops.framework.Object):
     def join_node_to_cluster(self, event: ops.framework.EventBase) -> None:
         """Join node to microceph cluster."""
         if not event.unit:
+            logger.warning("Add node triggered for without unit information.")
             return
 
         if self.charm.peers.interface.state.joined is True:
             logger.info("Unit has already joined the cluster")
             return
 
+        logger.debug(f"Adding {event.unit.name} to cluster.")
         token = self.charm.peers.get_app_data(f"{event.unit.name}.join_token")
         if not token:
             raise sunbeam_guard.BlockedExceptionError(f"join token not found for {gethostname()}")
