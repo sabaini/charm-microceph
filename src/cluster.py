@@ -70,7 +70,6 @@ class ClusterNodes(ops.framework.Object):
 
     def join_node_to_cluster(self, event: ops.framework.EventBase) -> None:
         """Join node to microceph cluster."""
-        logger.debug("handling {event}")
         if not event.unit:
             return
 
@@ -86,6 +85,7 @@ class ClusterNodes(ops.framework.Object):
             microceph.join_cluster(token=token, **self.charm._get_bootstrap_params())
             self.charm.peers.interface.state.joined = True
             self.charm.peers.set_unit_data({"joined": json.dumps(True)})
+            logger.debug("Joined cluster successfully.")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             raise e
