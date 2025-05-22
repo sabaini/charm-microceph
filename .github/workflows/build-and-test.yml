@@ -404,7 +404,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: microceph_juju_cluster_test_logs
+          name: microceph_juju_cluster_maintenance_test_logs
           path: logs
           retention-days: 30
 
@@ -894,7 +894,7 @@ jobs:
       - name: Deploy cos lite
         run: ./tests/scripts/ci_helpers.sh deploy_cos
 
-      - name: Deploy cos lite
+      - name: Check http endpoints
         run: ./tests/scripts/ci_helpers.sh check_http_endpoints_up
       
       - name: Deploy MicroCeph charm over LXD
@@ -919,7 +919,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: microceph_juju_storage_cluster_test_logs
+          name: microceph_cos_integration_logs
           path: logs
           retention-days: 30
 
