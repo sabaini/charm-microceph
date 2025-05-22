@@ -84,7 +84,7 @@ function deploy_grafana_agent() {
   juju integrate grafana-agent k8s:cos.grafana
   juju integrate grafana-agent k8s:cos.loki
 
-  juju wait-for unit grafana-agent/0 --query='workload-message=="tracing: off"' --timeout=20m
+  juju wait-for unit grafana-agent/1 --query='workload-message=="tracing: off"' --timeout=20m
 }
 
 function check_http_endpoints_up() {
