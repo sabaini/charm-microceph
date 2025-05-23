@@ -19,6 +19,7 @@ import json
 import logging
 import subprocess
 import uuid
+from socket import gethostname
 from typing import Tuple
 
 import ops.charm
@@ -70,22 +71,23 @@ class ClusterNodes(ops.framework.Object):
     def join_node_to_cluster(self, event: ops.framework.EventBase) -> None:
         """Join node to microceph cluster."""
         if not event.unit:
-            return
-
-        token = self.charm.peers.get_app_data(f"{event.unit.name}.join_token")
-        if not token:
-            logger.info("Token not available, deferring join event.")
-            event.defer()
+            logger.warning("Add node triggered for without unit information.")
             return
 
         if self.charm.peers.interface.state.joined is True:
             logger.info("Unit has already joined the cluster")
             return
 
+        logger.debug(f"Adding {event.unit.name} to cluster.")
+        token = self.charm.peers.get_app_data(f"{event.unit.name}.join_token")
+        if not token:
+            raise sunbeam_guard.BlockedExceptionError(f"join token not found for {gethostname()}")
+
         try:
             microceph.join_cluster(token=token, **self.charm._get_bootstrap_params())
             self.charm.peers.interface.state.joined = True
             self.charm.peers.set_unit_data({"joined": json.dumps(True)})
+            logger.debug("Joined cluster successfully.")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             raise e

@@ -432,7 +432,9 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def configure_app_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the leader unit."""
+        logger.debug(f"Configure leader for {event.__repr__}")
         if not self.is_leader_ready():
+            logger.debug("Bootstrapping MicroCeph cluster")
             self.bootstrap_cluster(event)
             # mark bootstrap node also as joined
             self.peers.interface.state.joined = True
@@ -453,16 +455,24 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             self.cluster_upgrades.init_upgrade(snap_chan)
 
         if isinstance(event, MicroClusterNewNodeEvent):
+            logger.debug(f"Generating join token for {event.unit.name}")
             self.cluster_nodes.add_node_to_cluster(event)
 
     def configure_app_non_leader(self, event: ops.framework.EventBase) -> None:
         """Configure the non leader unit."""
         super().configure_app_non_leader(event)
+
+        logger.debug(f"Configure non leader for {event.__repr__}")
+        # MicroClusterNodeAddedEvent triggered only when token is present.
         if isinstance(event, MicroClusterNodeAddedEvent):
             self.cluster_nodes.join_node_to_cluster(event)
 
-        if self.peers.interface.state.joined:
-            self.manage_rgw_service(event)
+        if not self.peers.interface.state.joined:
+            # deferral not needed as join token is not yet received.
+            raise sunbeam_guard.WaitingExceptionError("waiting to join cluster")
+
+        # Proceed with post join activities
+        self.manage_rgw_service(event)
 
     def _get_space_subnet(self, space: str):
         """Get the first available subnet in the network space."""
@@ -509,6 +519,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
         """Bootstrap microceph cluster."""
         try:
             microceph.bootstrap_cluster(**self._get_bootstrap_params())
+            logger.debug(f"Successfully bootstrapped with params {self._get_bootstrap_params()}")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(e.stderr)
             error_already_exists = "Unable to initialize cluster: Database is online"
@@ -516,7 +527,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
             if error_socket_not_exists in e.stderr:
                 event.defer()
-                return
+                raise sunbeam_guard.WaitingExceptionError("waiting for snap")
 
             if error_already_exists not in e.stderr:
                 raise e
