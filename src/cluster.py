@@ -44,13 +44,17 @@ class ClusterNodes(ops.framework.Object):
 
     def add_node_to_cluster(self, event: ops.framework.EventBase) -> None:
         """Add node to microceph cluster."""
+        logging.debug(f"Adding node to cluster: {event}")
         if not event.unit:
+            logger.warning("Add node triggered without unit information.")
             return
         # get hostname using unit name.
         hostnames = self.charm.peers.get_all_unit_values(
             key=event.unit.name, include_local_unit=True
         )
+        logging.debug(f"Hostnames for {event}: {hostnames}")
         if not hostnames:
+            logging.info("Deferring: no hostname found for: {event}")
             event.defer()
             return
 

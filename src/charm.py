@@ -128,8 +128,11 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
                 raise e
 
     def _on_peer_relation_created(self, event: ops.framework.EventBase) -> None:
+        logging.debug(f"Peer relation created: {event}")
         # save self hostname in the unit databag
-        self.peers.set_unit_data({self.unit.name: str(gethostname())})
+        hostname = gethostname()
+        logging.debug(f"Peer rel created, hostname: {hostname}")
+        self.peers.set_unit_data({self.unit.name: str(hostname)})
 
         public_address = self.model.get_binding(binding_key="public").network.bind_address
         if public_address:

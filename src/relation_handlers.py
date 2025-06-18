@@ -247,7 +247,8 @@ class MicroClusterPeers(OperatorPeers):
         # Do we have a join token?
         join_keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
         if f"{self.model.unit.name}.join_token" not in join_keys:
-            logger.debug(f"Join token not yet generated for node {self.model.unit.name}")
+            logger.debug(f"Join token not yet generated for node, defer: {self.model.unit.name}")
+            event.defer()
             return
 
         # We have a join token, emit node_added event
