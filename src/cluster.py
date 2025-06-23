@@ -46,7 +46,7 @@ class ClusterNodes(ops.framework.Object):
         """Add node to microceph cluster."""
         logging.debug(f"Adding node to cluster: {event}")
         if not event.unit:
-            logger.warning("Add node triggered without unit information.")
+            logger.error("Add node triggered without unit information.")
             return
         # get hostname using unit name.
         hostnames = self.charm.peers.get_all_unit_values(
