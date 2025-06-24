@@ -54,7 +54,7 @@ class ClusterNodes(ops.framework.Object):
         )
         logging.debug(f"Hostnames for {event}: {hostnames}")
         if not hostnames:
-            logging.info("Deferring: no hostname found for: {event}")
+            logging.info(f"Deferring: no hostname found for: {event}")
             event.defer()
             return
 
