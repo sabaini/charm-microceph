@@ -53,6 +53,7 @@ from relation_handlers import (
     MicroClusterPeerHandler,
     UpgradeNodeDoneEvent,
     UpgradeNodeRequestEvent,
+    collect_peer_data,
 )
 from storage import StorageHandler
 
@@ -129,15 +130,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
     def _on_peer_relation_created(self, event: ops.framework.EventBase) -> None:
         logging.debug(f"Peer relation created: {event}")
-        # save self hostname in the unit databag
-        hostname = gethostname()
-        logging.debug(f"Peer rel created, hostname: {hostname}")
-        self.peers.set_unit_data({self.unit.name: str(hostname)})
-
-        public_address = self.model.get_binding(binding_key="public").network.bind_address
-        if public_address:
-            logger.debug("Setting peer unit data")
-            self.peers.set_unit_data({"public-address": str(public_address)})
+        self.peers.set_unit_data(collect_peer_data(self.model))
 
     def _on_peer_relation_departed(self, event: ops.framework.EventBase) -> None:
         self.handle_traefik_ready(event)

@@ -21,8 +21,10 @@ This charm deploys and manages microceph.
 """
 import json
 import logging
+from socket import gethostname
 from typing import Callable, Dict, List, Optional, Tuple
 
+import ops
 import requests
 from ops.charm import CharmBase, RelationEvent
 from ops.framework import EventBase, EventSource, Handle, Object, ObjectEvents, StoredState
@@ -37,6 +39,38 @@ from ceph_broker import process_requests
 from microceph_client import Client
 
 logger = logging.getLogger(__name__)
+
+
+class HostnameChangeError(Exception):
+    """Exception raised when the hostname changes unexpectedly."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+def collect_peer_data(model: ops.model.Model) -> dict:
+    """Collect peer data."""
+    to_update = {}
+    current_data = model.get_relation("peers").data[model.unit]
+
+    hostname = gethostname()
+    unit_name = model.unit.name
+    logging.debug(f"collect_peer_data, {unit_name}: {hostname}")
+    # save self hostname in the unit databag if not already set
+    if not current_data.get(unit_name):
+        to_update[unit_name] = str(hostname)
+    # if hostname changed, raise an error
+    elif current_data.get(unit_name) != str(hostname):
+        raise HostnameChangeError(
+            f"Hostname change unsupported: {current_data.get(unit_name)}, {hostname}"
+        )
+    public_address = model.get_binding(binding_key="public").network.bind_address
+    if public_address:
+        if current_data.get("public-address") != str(public_address):
+            to_update["public-address"] = str(public_address)
+
+    return to_update
 
 
 class MicroClusterNewNodeEvent(RelationEvent):
@@ -244,11 +278,17 @@ class MicroClusterPeers(OperatorPeers):
             logger.debug(f"Node {self.model.unit.name} already joined")
             return
 
+        # Tactical workaround juju issue https://github.com/juju/juju/issues/20041
+        # by opportunistically trying to set peer data here.
+        peer_data = collect_peer_data(self.model)
+        if peer_data:
+            logger.debug(f"Setting peer data: {peer_data}")
+            self.set_unit_data(peer_data)
+
         # Do we have a join token?
         join_keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
         if f"{self.model.unit.name}.join_token" not in join_keys:
-            logger.debug(f"Join token not yet generated for node, defer: {self.model.unit.name}")
-            event.defer()
+            logger.debug(f"Join token not yet generated for node, return: {self.model.unit.name}")
             return
 
         # We have a join token, emit node_added event
