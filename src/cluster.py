@@ -54,8 +54,7 @@ class ClusterNodes(ops.framework.Object):
         )
         logging.debug(f"Hostnames for {event}: {hostnames}")
         if not hostnames:
-            logging.info(f"Deferring: no hostname found for: {event}")
-            event.defer()
+            logging.info(f"No hostname found for: {event}")
             return
 
         cmd = ["microceph", "cluster", "add", hostnames[0]]

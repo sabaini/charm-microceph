@@ -41,18 +41,30 @@ from microceph_client import Client
 logger = logging.getLogger(__name__)
 
 
+class HostnameChangeError(Exception):
+    """Exception raised when the hostname changes unexpectedly."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 def collect_peer_data(model: ops.model.Model) -> dict:
     """Collect peer data."""
     to_update = {}
     current_data = model.get_relation("peers").data[model.unit]
 
-    # save self hostname in the unit databag
     hostname = gethostname()
     unit_name = model.unit.name
     logging.debug(f"collect_peer_data, {unit_name}: {hostname}")
-    if current_data.get(unit_name) != str(hostname):
+    # save self hostname in the unit databag if not already set
+    if not current_data.get(unit_name):
         to_update[unit_name] = str(hostname)
-
+    # if hostname changed, raise an error
+    elif current_data.get(unit_name) != str(hostname):
+        raise HostnameChangeError(
+            f"Hostname change unsupported: {current_data.get(unit_name)}, {hostname}"
+        )
     public_address = model.get_binding(binding_key="public").network.bind_address
     if public_address:
         if current_data.get("public-address") != str(public_address):
@@ -276,8 +288,7 @@ class MicroClusterPeers(OperatorPeers):
         # Do we have a join token?
         join_keys = [key for key in self.get_all_app_data().keys() if key.endswith(".join_token")]
         if f"{self.model.unit.name}.join_token" not in join_keys:
-            logger.debug(f"Join token not yet generated for node, defer: {self.model.unit.name}")
-            event.defer()
+            logger.debug(f"Join token not yet generated for node, return: {self.model.unit.name}")
             return
 
         # We have a join token, emit node_added event
