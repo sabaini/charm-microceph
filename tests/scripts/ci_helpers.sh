@@ -21,7 +21,7 @@ function install_deps() {
     sudo snap install juju
     mkdir -p ~/.local/share/juju
     juju bootstrap localhost lxd
-    juju add-model microceph-test
+    juju add-model microceph-test --config logging-config="<root>=INFO;unit=DEBUG"
     date
 }
 
@@ -46,7 +46,7 @@ function bootstrap_k8s_controller() {
 
 function deploy_cos() {
   set -eux
-  juju add-model cos
+  juju add-model cos --config logging-config="<root>=INFO;unit=DEBUG"
   juju deploy cos-lite --trust
 
   juju offer prometheus:receive-remote-write
@@ -175,7 +175,7 @@ function install_juju_simple() {
 function setup_juju_spaces() {
     set -ex
     date
-    juju add-model microceph-test
+    juju add-model microceph-test --config logging-config="<root>=INFO;unit=DEBUG"
     juju add-space cluster
     # Subnet value from LXD profile.
     juju move-to-space cluster 10.85.4.0/24
