@@ -3,7 +3,7 @@ In this guide we will deploy a 3-node charm-microceph cluster in an LXD environm
 ## Prerequisites
 
 This guide assumes the following prerequisites:
-- a Linux machine with at least 16G of memory and 32G of free disk space
+- a Linux machine with at least 16G of memory and 50G of free disk space
 - with snapd installed
 - and virtualization-enabled
 
@@ -45,10 +45,10 @@ $ juju add-model mymodel
 Added 'mymodel' model on localhost/localhost with credential 'localhost' for user 'admin'
 ```
 
-Configure the model to spawn VMs with 4G of memory and a disk of 8G:
+Configure the model to spawn VMs with 4G of memory and a disk of 16G:
 
 ```
-$ juju set-model-constraints virt-type=virtual-machine mem=4G root-disk=8G
+$ juju set-model-constraints virt-type=virtual-machine mem=4G root-disk=16G
 ```
 
 
