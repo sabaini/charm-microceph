@@ -1,16 +1,21 @@
-In this guide we will deploy a 3-node charm-microceph cluster in an LXD environment using Juju. This guide assumes setting up an LXD environment on a single host machine with simulated storage. This works great for learning and testing purposes; in a production environment you would typically utilize Juju to deploy to several physical machines and storage media. 
+# Deploy MicroCeph via Charm
+
+In this tutorial we will deploy a three node charm-microceph cluster in an LXD environment using Juju. We will set up LXD on a single physical machine, and use simulated storage to keep hardware requirements at a minimum. This works great for learning and testing purposes; in a production environment you would typically utilize Juju to deploy to several physical machines and storage media. 
+
+First, we will install and configure LXD which will provide virtual machines for our cluster. Then we will install and bootstrap Juju, using LXD as a provider. Subsequently we will install and bootstrap the MicroCeph cluster, and in the final step configure (simulated) storage for MicroCeph.
 
 ## Prerequisites
 
-This guide assumes the following prerequisites:
+To successfully follow this tutorial, you will need:
+
 - a Linux machine with at least 16G of memory and 50G of free disk space
 - with snapd installed
 - and virtualization-enabled
 
-It was tested on Ubuntu 22.04 VM (any Ubuntu from 22.04 onwards should work fine). Note that this guide might run into issues on a container (such as docker) as containers typically are lacking virtualization capabilities.
+Note that this tutorial might run into issues on a container (such as docker) as containers typically are lacking virtualization capabilities.
 
 
-## Step 1: install and configure LXD
+## Install and configure LXD
 
 Install the LXD snap and auto-configure it -- this will give the host machine the ability to spawn VMs, including networking and storage:
 
@@ -21,9 +26,9 @@ $ sudo lxd init --auto
 
 Note that depending on your system, LXD might come pre-installed.
 
-## Step 2: install and bootstrap Juju
+## Install and bootstrap Juju
 
-This step will install Juju, and subsequently configure Juju to make use of the LXD provider that was setup in the previous step. 
+Install and then configure Juju to make use of the LXD provider that was setup in the previous step:
 
 ```
 $ sudo snap install juju 
@@ -52,12 +57,12 @@ $ juju set-model-constraints virt-type=virtual-machine mem=4G root-disk=16G
 ```
 
 
-For further details also consult the [Juju documentation on LXD](https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-lxd-cloud-and-juju/#the-lxd-cloud-and-juju)
+For further details consult the [Juju documentation on LXD](https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-lxd-cloud-and-juju/#the-lxd-cloud-and-juju)
 
 
-## Step 3: deploy MicroCeph
+## Deploy MicroCeph
 
-With the Juju environment configured, the next step is to deploy MicroCeph. With the below will will deploy 3 clustered MicroCeph units:
+With the Juju environment configured, the next step is to deploy MicroCeph. Deploy three MicroCeph units with this command:
 
 ```
 $ juju deploy microceph --num-units 3
@@ -85,7 +90,7 @@ Machine  State    Address        Inst id        Base          AZ  Message
 2        started  10.106.25.144  juju-9fe08a-2  ubuntu@24.04      Running
 ```
 
-Installing the MicroCeph units also bootstrapped a Ceph cluster. Check the status by SSH'ing to one unit and running `ceph -s`. This should result in something like the below:
+Installing the MicroCeph units also bootstrapped a Ceph cluster. Check the status by SSHing to one unit and running `ceph -s`. This should result in something like the below:
 
 ```
 $ juju ssh microceph/0 "sudo ceph -s"
@@ -101,20 +106,20 @@ $ juju ssh microceph/0 "sudo ceph -s"
 ...
 ```
 
-The above shows a running Ceph cluster, however it displays a warning. Ceph warns because it by default expects 3 disks (OSDs in Ceph parlance) for storage, and we have not yet configured any.
+The above output shows a running Ceph cluster, however it displays a health warning. Ceph warns us because it by default expects 3 disks (OSDs in Ceph parlance) for storage, and we have not yet configured any.
 
-## Step 4: adding Disks
+## Adding Disks
 
-For the purposes of this guide we will be setting up small simulated disks for ease of configuration. Note these small loop disks are only suitable for a demo setup like this; in a production environment physical disks would be utilized instead.
+For the purposes of this tutorial we will be setting up small simulated disks for ease of configuration. Note these small loop disks are only suitable for a demo setup like this; in a production environment physical disks would be utilized instead.
 
-Run the below to add loop based storage of 2G size to a unit:
+Run this command to add loop based storage of 2G size to a unit:
 
 ```
 $ juju add-storage microceph/0 osd-standalone="loop,2G,1"
 added storage osd-standalone/0 to microceph/0
 ```
 
-This will configure the first unit with a 2G OSD. When running `juju status` you should see the unit status to `executing` and a status message appear that an OSD is being enrolled.
+This will configure the first unit with a 2G OSD. When running `juju status` you should see the unit status change to `executing` and a status message appear that an OSD is being enrolled.
 
 Continue by running the same command for the other two units:
 
@@ -137,6 +142,7 @@ $ juju ssh microceph/0 "sudo ceph -s"
     osd: 3 osds: 3 up (since 34s), 3 in (since 42s)
 ```
 
-## Conclusion
+## Next steps
 
-This concludes the Getting Started guide. We have successfully set up a Juju-managed MicroCeph cluster, ready to serve as a test and learning environment. Check out the [MicroCeph charmhub page](https://charmhub.io/microceph) to see how to integrate MicroCeph with other Juju applications.
+We have successfully set up a Juju-managed MicroCeph cluster, ready to serve as a test and learning environment. 
+To see how to configure and integrate MicroCeph with other Juju applications, see [the MicroCeph page on Charmhub](https://charmhub.io/microceph).
