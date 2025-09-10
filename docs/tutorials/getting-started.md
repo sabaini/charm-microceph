@@ -43,7 +43,7 @@ Now you can run
 to create a new model to deploy workloads.
 ```
 
-If successful, `juju bootstrap` will prompt you to create a model. Models are the logical grouping of connected applications in Juju. We will create a model `mymodel`:
+You have successfully created a Juju controller named `lxd-controller`. Notice that the juju bootstrap command prompts you to create a Juju model. Models are the logical grouping of connected applications in Juju. We will create a model `mymodel`:
 
 ```
 $ juju add-model mymodel
@@ -90,7 +90,7 @@ Machine  State    Address        Inst id        Base          AZ  Message
 2        started  10.106.25.144  juju-9fe08a-2  ubuntu@24.04      Running
 ```
 
-Installing the MicroCeph units also bootstrapped a Ceph cluster. Check the status by SSHing to one unit and running `ceph -s`. This should result in something like the below:
+Installing the MicroCeph units also bootstrapped a Ceph cluster. Check the status by SSHing into one unit and running `ceph -s`. This should result in something like the below:
 
 ```
 $ juju ssh microceph/0 "sudo ceph -s"
@@ -106,9 +106,9 @@ $ juju ssh microceph/0 "sudo ceph -s"
 ...
 ```
 
-The above output shows a running Ceph cluster, however it displays a health warning. Ceph warns us because it by default expects 3 disks (OSDs in Ceph parlance) for storage, and we have not yet configured any.
+The above output shows a running Ceph cluster, however it displays a health warning. Ceph warns us because it by default expects three disks (OSDs in Ceph parlance) for storage, and we have not yet configured any.
 
-## Adding Disks
+## Adding disks
 
 For the purposes of this tutorial we will be setting up small simulated disks for ease of configuration. Note these small loop disks are only suitable for a demo setup like this; in a production environment physical disks would be utilized instead.
 
