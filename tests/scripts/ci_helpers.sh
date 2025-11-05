@@ -32,6 +32,30 @@ function install_deps() {
     date
 }
 
+function install_terraform_tooling() {
+  local ct_url=https://github.com/canonical/cephtools/releases/download/latest/cephtools
+  local ct_path=/usr/local/bin/cephtools
+  tmp="$(mktemp)"
+  if [[ ! -x $ct_path ]] ; then
+    curl -fsSL -o $tmp $ct_url
+    sudo install -m 0755 $tmp $ct_path
+  fi
+  rm -rf $tmp
+  sudo $ct_path terraform install-deps
+}
+
+
+function validate_terragrunt_module() {
+  set -eux
+  local working_dir="terraform/microceph"
+  export TF_VAR_model_uuid="${TF_VAR_model_uuid:-00000000-0000-0000-0000-000000000000}"
+  export TF_IN_AUTOMATION=1
+
+  pushd $working_dir
+  terragrunt init --non-interactive
+  terragrunt validate --non-interactive
+}
+
 function cleanup_docker() {
   sudo apt purge docker* --yes
   sudo apt purge containerd* --yes

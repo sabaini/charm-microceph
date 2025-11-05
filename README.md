@@ -20,3 +20,8 @@ Ceph cluster with [Juju](https://juju.is/).
 
 Please visit [charmhub](https://charmhub.io/microceph) for documentation and instructions
 on consuming charmed MicroCeph.
+
+## Terraform module
+
+A reusable Terraform + Terragrunt module for deploying the `microceph` charm can be found in `terraform/microceph/`. See the module README for usage instructions.
+
