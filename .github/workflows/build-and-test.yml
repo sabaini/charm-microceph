@@ -51,6 +51,62 @@ jobs:
           name: charms
           path: "*.charm"
 
+  integration-test:
+    needs:
+      - lint
+      - unit-test
+      - build
+    name: Integration tests
+    runs-on: self-hosted-linux-amd64-noble-xlarge
+    timeout-minutes: 150
+    steps:
+      - name: Download charm
+        uses: actions/download-artifact@v4
+        with:
+          name: charms
+          path: ~/artifacts/
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup LXD
+        uses: canonical/setup-lxd@v0.1.1
+        with:
+          channel: 5.21/stable
+
+      - name: Install tooling
+        run: |
+          sudo snap install charmcraft --classic
+          sudo apt-get -qq install tox
+
+      - name: Install and bootstrap
+        run: ./tests/scripts/ci_helpers.sh install_deps
+
+      - name: Run integration tests
+        run: |
+          set -eux
+          cp ~/artifacts/microceph.charm .
+          tox -e integration -- --keep-models
+
+      - name: Collect logs
+        if: failure()
+        run: ./tests/scripts/ci_helpers.sh collect_sunbeam_and_microceph_logs
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microceph_juju_functional_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
+          
+
   functional-test:
     needs:
       - lint
@@ -937,4 +993,3 @@ jobs:
       - name: Setup tmate session
         if: ${{ failure() && runner.debug }}
         uses: canonical/action-tmate@main
-
