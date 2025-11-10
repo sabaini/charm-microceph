@@ -12,97 +12,81 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Microceph charm."""
+"""Tests for the MicroCeph charm."""
 
-import asyncio
 import json
 import logging
 from pathlib import Path
 
+import jubilant
 import pytest
-import test_utils
 import yaml
-from pytest_operator.plugin import OpsTest
+
+from tests.integration import helpers
 
 logger = logging.getLogger(__name__)
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
+CEPHCLIENT_APP = "cephclient"
 LOOP_OSD_SPEC = "1G,3"
 
 
-async def _ensure_loop_osd(ops_test: OpsTest) -> None:
-    """Ensure at least one OSD exists by enrolling a loop-backed device."""
-    microceph_unit = ops_test.model.applications[APP_NAME].units[0]
-    action = await microceph_unit.run_action("add-osd", **{"loop-spec": LOOP_OSD_SPEC})
-    result = await action.wait()
-    assert result.status == "completed", result.results
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME], status="active", raise_on_blocked=True, timeout=600
-        )
+@pytest.fixture(scope="module")
+def deployed_apps(juju: jubilant.Juju, microceph_charm: Path, cephclient_charm: Path):
+    """Deploy MicroCeph and the cephclient tester charm."""
+    logger.info("Deploying charms: %s and %s", APP_NAME, CEPHCLIENT_APP)
+    juju.deploy(str(microceph_charm), APP_NAME)
+    juju.deploy(str(cephclient_charm), CEPHCLIENT_APP)
+    with helpers.fast_forward(juju):
+        helpers.wait_for_apps(juju, APP_NAME, CEPHCLIENT_APP, timeout=1000)
+    helpers.ensure_loop_osd(juju, APP_NAME, LOOP_OSD_SPEC)
+    return (APP_NAME, CEPHCLIENT_APP)
+
+
+@pytest.fixture(scope="module")
+def integrated_apps(juju: jubilant.Juju, deployed_apps):
+    """Integrate the ceph relation between the deployed applications."""
+    juju.integrate(f"{CEPHCLIENT_APP}:ceph", f"{APP_NAME}:ceph")
+    with helpers.fast_forward(juju):
+        helpers.wait_for_apps(juju, APP_NAME, CEPHCLIENT_APP, timeout=180)
+    return deployed_apps
+
+
+@pytest.fixture(scope="module")
+def relation_removed(juju: jubilant.Juju, integrated_apps):
+    """Remove the ceph relation between the applications."""
+    juju.remove_relation(f"{CEPHCLIENT_APP}:ceph", f"{APP_NAME}:ceph")
+    with helpers.fast_forward(juju):
+        helpers.wait_for_apps(juju, APP_NAME, CEPHCLIENT_APP, timeout=180)
+    return integrated_apps
 
 
 @pytest.mark.abort_on_fail
-async def test_build_and_deploy(ops_test: OpsTest):
-    """Build the charm-under-test and deploy it together with test charms."""
-    # Build and deploy charm from local source folder
-    charm = Path("./microceph.charm")
-    if not charm.exists():
-        logger.warning(f"Rebuilding charm from {Path('.').absolute()}")
-        charm = Path(await ops_test.build_charm(".", verbosity="debug"))
-    charm = charm.resolve()
-    cephclient_charm_path = (Path(__file__).parent / "testers" / "cephclient").absolute()
-    test_charm = Path(
-        await ops_test.build_charm(cephclient_charm_path, verbosity="debug")
-    ).resolve()
-
-    # Deploy the charm and wait for active/idle status
-    await asyncio.gather(
-        ops_test.model.deploy(str(charm), application_name=APP_NAME),
-        ops_test.model.deploy(str(test_charm), application_name="cephclient"),
-    )
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME, "cephclient"], status="active", raise_on_blocked=True, timeout=1000
-        )
-    await _ensure_loop_osd(ops_test)
+def test_build_and_deploy(juju: jubilant.Juju, deployed_apps):
+    """Build the charms, deploy them, and ensure the applications settle."""
+    status = juju.status()
+    assert jubilant.all_active(status, *deployed_apps)
 
 
 @pytest.mark.abort_on_fail
-async def test_integrate(ops_test: OpsTest):
-    """Integrate the charms over ceph relation."""
-    await ops_test.model.integrate("cephclient:ceph", f"{APP_NAME}:ceph")
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME, "cephclient"], status="active", raise_on_blocked=True, timeout=180
-        )
+def test_integrate(juju: jubilant.Juju, integrated_apps):
+    """Integrate the charms over the ceph relation."""
+    status = juju.status()
+    assert jubilant.all_active(status, *integrated_apps)
 
 
 @pytest.mark.abort_on_fail
-async def test_broker_request_processed(ops_test: OpsTest):
-    """Check if relation data is updated.
-
-    Check if broker request has been handled and relation data bag
-    is updated with response.
-    """
-    cephclient_unit = ops_test.model.applications["cephclient"].units[0]
-    microceph_unit = ops_test.model.applications["microceph"].units[0]
-
-    data = test_utils.get_relation_data(
-        cephclient_unit.name, "ceph", microceph_unit.name, ops_test.model.name
-    )
-    broker_rsp_key = f"broker-rsp-{cephclient_unit.name.replace('/', '-')}"
+def test_broker_request_processed(juju: jubilant.Juju, integrated_apps):
+    """Check if relation data is updated after the broker request completes."""
+    data, broker_rsp_key = helpers.wait_for_broker_response(juju, CEPHCLIENT_APP, APP_NAME)
     assert broker_rsp_key in data
     broker_rsp_value = json.loads(data.get(broker_rsp_key))
     assert broker_rsp_value.get("exit-code") == 0
 
 
 @pytest.mark.abort_on_fail
-async def test_remove_integration(ops_test: OpsTest):
-    """Remove ceph integration."""
-    await ops_test.juju("remove-relation", "cephclient:ceph", f"{APP_NAME}:ceph")
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME, "cephclient"], status="active", raise_on_blocked=True, timeout=180
-        )
+def test_remove_integration(juju: jubilant.Juju, relation_removed):
+    """Remove ceph integration and ensure both applications stay healthy."""
+    status = juju.status()
+    assert jubilant.all_active(status, *relation_removed)
