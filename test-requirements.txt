@@ -9,7 +9,7 @@ mock
 flake8
 stestr
 ops<3.4
-pydantic<2.12
+pydantic>=2.12,<2.13 
 cosl==0.0.55
 
 git+https://github.com/canonical/ceph-charms#egg=charms_ceph&subdirectory=charms.ceph
