@@ -63,6 +63,7 @@ def relation_removed(juju: jubilant.Juju, integrated_apps):
 
 
 @pytest.mark.abort_on_fail
+@pytest.mark.smoke
 def test_build_and_deploy(juju: jubilant.Juju, deployed_apps):
     """Build the charms, deploy them, and ensure the applications settle."""
     status = juju.status()
@@ -70,6 +71,7 @@ def test_build_and_deploy(juju: jubilant.Juju, deployed_apps):
 
 
 @pytest.mark.abort_on_fail
+@pytest.mark.smoke
 def test_integrate(juju: jubilant.Juju, integrated_apps):
     """Integrate the charms over the ceph relation."""
     status = juju.status()
@@ -77,6 +79,7 @@ def test_integrate(juju: jubilant.Juju, integrated_apps):
 
 
 @pytest.mark.abort_on_fail
+@pytest.mark.smoke
 def test_broker_request_processed(juju: jubilant.Juju, integrated_apps):
     """Check if relation data is updated after the broker request completes."""
     data, broker_rsp_key = helpers.wait_for_broker_response(juju, CEPHCLIENT_APP, APP_NAME)
@@ -86,6 +89,7 @@ def test_broker_request_processed(juju: jubilant.Juju, integrated_apps):
 
 
 @pytest.mark.abort_on_fail
+@pytest.mark.smoke
 def test_remove_integration(juju: jubilant.Juju, relation_removed):
     """Remove ceph integration and ensure both applications stay healthy."""
     status = juju.status()

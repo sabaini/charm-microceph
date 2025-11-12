@@ -88,11 +88,11 @@ jobs:
         run: |
           set -eux
           cp ~/artifacts/microceph.charm .
-          tox -e integration -- --keep-models
+          tox -e integration -- --keep-models -m smoke
 
       - name: Collect logs
         if: failure()
-        run: ./tests/scripts/ci_helpers.sh collect_sunbeam_and_microceph_logs
+        run: ./tests/scripts/ci_helpers.sh collect_integration_logs
 
       - name: Upload logs
         if: failure()

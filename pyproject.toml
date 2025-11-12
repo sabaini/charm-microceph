@@ -10,6 +10,7 @@ minversion = "6.0"
 log_cli_level = "INFO"
 markers = [
     "abort_on_fail: stop the test session immediately when the marked test fails",
+    "smoke: quick integration checks",
 ]
 
 # Formatting tools configuration
