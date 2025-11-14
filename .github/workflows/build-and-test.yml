@@ -27,6 +27,22 @@ jobs:
       - name: Run tests
         run: tox -e py3
 
+  terragrunt-validate:
+    name: Terragrunt validate
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - unit-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Terraform and Terragrunt
+        run: ./tests/scripts/ci_helpers.sh install_terraform_tooling
+      - name: Validate Terragrunt module
+        env:
+          TF_VAR_model_uuid: 00000000-0000-0000-0000-000000000000
+        run: ./tests/scripts/ci_helpers.sh validate_terragrunt_module
+
   build:
     name: Build the charm
     runs-on: ubuntu-latest
