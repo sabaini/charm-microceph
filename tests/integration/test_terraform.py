@@ -18,7 +18,16 @@ from tests.integration import helpers
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.slow
 
-REPO_ROOT = Path(__file__).parent.parent.parent
+
+def _find_repo_root(start: Path) -> Path:
+    """Locate repository root by walking upward until a terraform dir is found."""
+    for path in (start, *start.parents):
+        if (path / "terraform").is_dir():
+            return path
+    raise FileNotFoundError("Could not locate repository root containing terraform directory")
+
+
+REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 TERRAFORM_MODULE_DIR = REPO_ROOT / "terraform" / "microceph"
 APP_NAME = "microceph"
 LOOP_OSD_SPEC = "1G,3"
