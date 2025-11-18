@@ -22,7 +22,7 @@ import jubilant
 import pytest
 import yaml
 
-from tests.integration import helpers
+from tests import helpers
 
 logger = logging.getLogger(__name__)
 

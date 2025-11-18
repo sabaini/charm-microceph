@@ -13,7 +13,7 @@ from typing import Any, Mapping
 import jubilant
 import pytest
 
-from tests.integration import helpers
+from tests import helpers
 
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.slow

@@ -27,6 +27,14 @@ def install_terraform_tooling() -> None:
     subprocess.run(["sudo", str(cephtools_path), "terraform", "install-deps"], check=True)
 
 
+@functools.lru_cache(maxsize=1)
+def ensure_charmcraft() -> None:
+    """Install charmcraft snap if it is not already available."""
+    if shutil.which("charmcraft"):
+        return
+    subprocess.run(["sudo", "snap", "install", "charmcraft", "--classic"], check=True)
+
+
 def _ensure_cephtools_binary() -> Path:
     """Ensure the cephtools binary exists locally and is executable."""
     if CEPHTOOLS_PATH.is_file() and os.access(CEPHTOOLS_PATH, os.X_OK):
@@ -161,7 +169,7 @@ def wait_for_broker_response(
 
 def _get_relation_data(requirer_unit: str, provider_unit: str, model_name: str) -> dict[str, str]:
     """Fetch relation data between requirer and provider units."""
-    from . import test_utils  # Local import to avoid circular dependencies
+    from ..integration import test_utils  # Local import to avoid circular dependencies
 
     return test_utils.get_relation_data(requirer_unit, "ceph", provider_unit, model_name)
 
