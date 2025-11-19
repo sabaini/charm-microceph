@@ -92,7 +92,7 @@ def _microceph_services_snapshot(
     return services, output
 
 
-def _status_reports_rgw(status: dict[str, Any]) -> bool:
+def _is_rgw_enabled(status: dict[str, Any]) -> bool:
     try:
         services = status["servicemap"]["services"]["rgw"]
     except (KeyError, TypeError):
@@ -109,6 +109,13 @@ def _status_reports_rgw(status: dict[str, Any]) -> bool:
 def _wait_for_microceph_status_rgw(
     juju: jubilant.Juju, unit_name: str, *, expected_nodes: int, timeout: int = DEFAULT_TIMEOUT
 ) -> str:
+    """Wait until we have enough rgw service entries.
+
+    We poll `microceph status` on some unit repeatedly until we have at least *expected_nodes*
+    services, and all of the first *expected_nodes* have an rgw service.
+
+    Fail if we don't reach this cond in time.
+    """
     deadline = time.time() + timeout
     last_output = ""
     while time.time() < deadline:
@@ -131,7 +138,7 @@ def _wait_for_ceph_status_rgw(
     last_status: dict[str, Any] = {}
     while time.time() < deadline:
         status = helpers.fetch_ceph_status(juju, APP_NAME)
-        if _status_reports_rgw(status):
+        if _is_rgw_enabled(status):
             return status
         last_status = status
         time.sleep(15)
@@ -274,7 +281,7 @@ class TestTerraformRadosGateway:
             expected_nodes=len(app.units),
         )
         rgw_status = _wait_for_ceph_status_rgw(terraform_controller.juju)
-        assert _status_reports_rgw(rgw_status)
+        assert _is_rgw_enabled(rgw_status)
 
     @pytest.mark.abort_on_fail
     def test_rgw_healthcheck(self, terraform_controller: TerraformController) -> None:
