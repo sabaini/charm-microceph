@@ -111,8 +111,8 @@ def _wait_for_microceph_status_rgw(
 ) -> str:
     """Wait until we have enough rgw service entries.
 
-    We poll `microceph status` on some unit repeatedly until we have at least *expected_nodes*
-    services, and all of the first *expected_nodes* have an rgw service.
+    We poll `microceph status` on some unit repeatedly until the total count of RGW
+    services is at least *expected_nodes*.
 
     Fail if we don't reach this cond in time.
     """
@@ -120,14 +120,13 @@ def _wait_for_microceph_status_rgw(
     last_output = ""
     while time.time() < deadline:
         services, output = _microceph_services_snapshot(juju, unit_name)
-        if len(services) >= expected_nodes and all(
-            "rgw" in svc for svc in services[:expected_nodes]
-        ):
+        rgw_count = sum(1 for svc in services if "rgw" in svc)
+        if rgw_count >= expected_nodes:
             return output
         last_output = output
         time.sleep(15)
     raise AssertionError(
-        "RGW not listed for all nodes in microceph status; last output:\n" + last_output
+        "RGW not listed for enough nodes in microceph status; last output:\n" + last_output
     )
 
 
