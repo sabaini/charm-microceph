@@ -108,7 +108,7 @@ jobs:
 
       - name: Collect logs
         if: failure()
-        run: ./tests/scripts/ci_helpers.sh collect_integration_logs
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs
 
       - name: Upload logs
         if: failure()

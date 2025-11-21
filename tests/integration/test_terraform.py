@@ -8,26 +8,18 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import jubilant
 import pytest
 
-from tests.integration import helpers
+from tests import helpers
 
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.slow
 
 
-def _find_repo_root(start: Path) -> Path:
-    """Locate repository root by walking upward until a terraform dir is found."""
-    for path in (start, *start.parents):
-        if (path / "terraform").is_dir():
-            return path
-    raise FileNotFoundError("Could not locate repository root containing terraform directory")
-
-
-REPO_ROOT = _find_repo_root(Path(__file__).resolve())
+REPO_ROOT = helpers.find_repo_root(Path(__file__).resolve())
 TERRAFORM_MODULE_DIR = REPO_ROOT / "terraform" / "microceph"
 APP_NAME = "microceph"
 LOOP_OSD_SPEC = "1G,3"
@@ -56,6 +48,14 @@ def _get_model_name(juju: jubilant.Juju) -> str:
     return model_name
 
 
+def _format_tf_map(values: Mapping[str, str]) -> str:
+    if not values:
+        raise ValueError("config map must not be empty")
+
+    serialized = ",".join(f'"{key}"="{value}"' for key, value in sorted(values.items()))
+    return "{" + serialized + "}"
+
+
 def _run_terragrunt(
     subcommand: str,
     env: dict[str, str],
@@ -78,28 +78,94 @@ def _run_terragrunt(
     return subprocess.run(command, check=check, cwd=TERRAFORM_MODULE_DIR, env=env)
 
 
-def _wait_for_microceph_units(juju: jubilant.Juju, *, expected_units: int) -> None:
-    def _has_units(status: jubilant.Status) -> bool:
-        app = status.apps.get(APP_NAME)
-        if not app or not app.units:
-            return False
-        return len(app.units) >= expected_units
+def _microceph_services_snapshot(
+    juju: jubilant.Juju, unit_name: str
+) -> tuple[list[set[str]], str]:
+    output = juju.ssh(unit_name, "sudo", "microceph", "status")
+    services: list[set[str]] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("services:"):
+            _, entries = stripped.split(":", 1)
+            names = [svc.strip().lower() for svc in entries.split(",") if svc.strip()]
+            services.append(set(names))
+    return services, output
 
-    juju.wait(_has_units, error=jubilant.any_error, timeout=DEFAULT_TIMEOUT)
+
+def _is_rgw_enabled(status: dict[str, Any]) -> bool:
+    try:
+        services = status["servicemap"]["services"]["rgw"]
+    except (KeyError, TypeError):
+        return False
+
+    daemons = services.get("daemons")
+    if isinstance(daemons, dict):
+        return bool(daemons)
+    if isinstance(daemons, list):
+        return bool(daemons)
+    return False
 
 
-def _wait_for_ceph_health_ok(
+def _wait_for_microceph_status_rgw(
+    juju: jubilant.Juju, unit_name: str, *, expected_nodes: int, timeout: int = DEFAULT_TIMEOUT
+) -> str:
+    """Wait until we have enough rgw service entries.
+
+    We poll `microceph status` on some unit repeatedly until the total count of RGW
+    services is at least *expected_nodes*.
+
+    Fail if we don't reach this cond in time.
+    """
+    deadline = time.time() + timeout
+    last_output = ""
+    while time.time() < deadline:
+        services, output = _microceph_services_snapshot(juju, unit_name)
+        rgw_count = sum(1 for svc in services if "rgw" in svc)
+        if rgw_count >= expected_nodes:
+            return output
+        last_output = output
+        time.sleep(15)
+    raise AssertionError(
+        "RGW not listed for enough nodes in microceph status; last output:\n" + last_output
+    )
+
+
+def _wait_for_ceph_status_rgw(
     juju: jubilant.Juju, timeout: int = DEFAULT_TIMEOUT
 ) -> dict[str, Any]:
     deadline = time.time() + timeout
     last_status: dict[str, Any] = {}
     while time.time() < deadline:
-        last_status = helpers.fetch_ceph_status(juju, APP_NAME)
-        health = last_status.get("health", {})
-        if health.get("status") == "HEALTH_OK":
-            return last_status
+        status = helpers.fetch_ceph_status(juju, APP_NAME)
+        if _is_rgw_enabled(status):
+            return status
+        last_status = status
         time.sleep(15)
-    raise AssertionError(f"Ceph health did not reach HEALTH_OK; last status: {last_status}")
+    raise AssertionError(f"Ceph status never reported RGW; last status: {last_status}")
+
+
+def _assert_rgw_healthcheck(
+    juju: jubilant.Juju, unit_name: str, timeout: int = DEFAULT_TIMEOUT
+) -> None:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            juju.ssh(
+                unit_name,
+                "sudo",
+                "curl",
+                "-fsS",
+                "--max-time",
+                "15",
+                "http://127.0.0.1:80/swift/healthcheck",
+            )
+            return
+        except jubilant.CLIError as exc:  # type: ignore[attr-defined]
+            last_error = exc.stderr or exc.stdout or str(exc)
+        time.sleep(10)
+
+    raise AssertionError(f"RGW health check failed on {unit_name}; last error: {last_error}")
 
 
 class TerraformController:
@@ -115,16 +181,21 @@ class TerraformController:
     def juju(self) -> jubilant.Juju:
         return self._juju
 
-    def apply(self, *, units: int) -> dict[str, Any]:
-        """Apply the microceph terragrunt plan."""
+    def apply(self, *, units: int, config: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """Apply the microceph Terragrunt plan with optional charm config overrides."""
+        extra_args = ["-var", f"units={units}"]
+        if config:
+            extra_args.extend(["-var", f"config={_format_tf_map(config)}"])
+
         _run_terragrunt(
             "apply",
             self._env,
-            "-var",
-            f"units={units}",
+            *extra_args,
             download_dir=self._download_dir,
         )
-        _wait_for_microceph_units(self._juju, expected_units=units)
+        helpers.wait_for_microceph_units(
+            self._juju, APP_NAME, expected_units=units, timeout=DEFAULT_TIMEOUT
+        )
         helpers.wait_for_apps(self._juju, APP_NAME, timeout=DEFAULT_TIMEOUT)
 
         status = self._juju.status()
@@ -139,7 +210,7 @@ class TerraformController:
             helpers.ensure_loop_osd(self._juju, APP_NAME, LOOP_OSD_SPEC, new_units)
         helpers.wait_for_apps(self._juju, APP_NAME, timeout=DEFAULT_TIMEOUT)
         self._known_units = current_units
-        return _wait_for_ceph_health_ok(self._juju)
+        return helpers.wait_for_ceph_health_ok(self._juju, APP_NAME, timeout=DEFAULT_TIMEOUT)
 
     def destroy(self) -> None:
         result = _run_terragrunt(
@@ -188,3 +259,37 @@ class TestTerraformScale:
             APP_NAME,
             expected_osds=4 * LOOP_OSDS_PER_UNIT,
         )
+
+
+@pytest.mark.incremental
+class TestTerraformRadosGateway:
+    @pytest.mark.abort_on_fail
+    def test_enable_rgw_via_config(self, terraform_controller: TerraformController) -> None:
+        status = terraform_controller.apply(units=4, config={"enable-rgw": "*"})
+        assert status.get("health", {}).get("status") == "HEALTH_OK"
+
+        current_status = terraform_controller.juju.status()
+        app = current_status.apps.get(APP_NAME)
+        if not app or not app.units:
+            raise AssertionError(f"Application {APP_NAME} missing units after RGW apply")
+
+        unit_name = helpers.first_unit_name(current_status, APP_NAME)
+        _wait_for_microceph_status_rgw(
+            terraform_controller.juju,
+            unit_name,
+            expected_nodes=len(app.units),
+        )
+        rgw_status = _wait_for_ceph_status_rgw(terraform_controller.juju)
+        assert _is_rgw_enabled(rgw_status)
+
+    @pytest.mark.abort_on_fail
+    def test_rgw_healthcheck(self, terraform_controller: TerraformController) -> None:
+        status = terraform_controller.juju.status()
+        unit_name = helpers.first_unit_name(status, APP_NAME)
+        _assert_rgw_healthcheck(terraform_controller.juju, unit_name)
+
+    @pytest.mark.abort_on_fail
+    def test_rgw_object_io(self, terraform_controller: TerraformController) -> None:
+        status = terraform_controller.juju.status()
+        unit_name = helpers.first_unit_name(status, APP_NAME)
+        helpers.exercise_rgw(terraform_controller.juju, unit_name)

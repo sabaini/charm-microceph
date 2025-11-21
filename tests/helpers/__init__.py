@@ -27,6 +27,14 @@ def install_terraform_tooling() -> None:
     subprocess.run(["sudo", str(cephtools_path), "terraform", "install-deps"], check=True)
 
 
+@functools.lru_cache(maxsize=1)
+def ensure_charmcraft() -> None:
+    """Install charmcraft snap if it is not already available."""
+    if shutil.which("charmcraft"):
+        return
+    subprocess.run(["sudo", "snap", "install", "charmcraft", "--classic"], check=True)
+
+
 def _ensure_cephtools_binary() -> Path:
     """Ensure the cephtools binary exists locally and is executable."""
     if CEPHTOOLS_PATH.is_file() and os.access(CEPHTOOLS_PATH, os.X_OK):
@@ -75,6 +83,20 @@ def wait_for_apps(
         error=jubilant.any_error,
         timeout=timeout,
     )
+
+
+def wait_for_microceph_units(
+    juju: jubilant.Juju, app: str, *, expected_units: int, timeout: int = DEFAULT_TIMEOUT
+) -> None:
+    """Wait until *app* reports at least *expected_units* units."""
+
+    def _has_units(status: jubilant.Status) -> bool:
+        app_status = status.apps.get(app)
+        if not app_status or not app_status.units:
+            return False
+        return len(app_status.units) >= expected_units
+
+    juju.wait(_has_units, error=jubilant.any_error, timeout=timeout)
 
 
 def first_unit_name(status: jubilant.Status, app: str) -> str:
@@ -147,7 +169,7 @@ def wait_for_broker_response(
 
 def _get_relation_data(requirer_unit: str, provider_unit: str, model_name: str) -> dict[str, str]:
     """Fetch relation data between requirer and provider units."""
-    from . import test_utils  # Local import to avoid circular dependencies
+    from ..integration import test_utils  # Local import to avoid circular dependencies
 
     return test_utils.get_relation_data(requirer_unit, "ceph", provider_unit, model_name)
 
@@ -157,6 +179,44 @@ def fetch_ceph_status(juju: jubilant.Juju, app: str) -> dict[str, Any]:
     unit_name = first_unit_name(juju.status(), app)
     output = juju.ssh(unit_name, "sudo", "ceph", "status", "--format", "json")
     return json.loads(output)
+
+
+def wait_for_ceph_health_ok(
+    juju: jubilant.Juju, app: str, timeout: int = DEFAULT_TIMEOUT
+) -> dict[str, Any]:
+    """Wait until ``ceph status`` for *app* reports ``HEALTH_OK``."""
+    deadline = time.time() + timeout
+    last_status: dict[str, Any] = {}
+    while time.time() < deadline:
+        last_status = fetch_ceph_status(juju, app)
+        health = last_status.get("health", {})
+        if health.get("status") == "HEALTH_OK":
+            return last_status
+        time.sleep(15)
+    raise AssertionError(f"Ceph health did not reach HEALTH_OK; last status: {last_status}")
+
+
+def exercise_rgw(juju: jubilant.Juju, unit_name: str, filename: str = "test") -> None:
+    """Create an RGW user, upload, and fetch an object via s3cmd on unit_name."""
+    script = (
+        "set -euo pipefail\n"
+        f'filename="{filename}"\n'
+        "sudo apt-get -qq -y install s3cmd || true\n"
+        "if ! sudo microceph.radosgw-admin user list | grep -q test; then\n"
+        '  echo "Create S3 user: test"\n'
+        "  sudo microceph.radosgw-admin user create --uid=test --display-name=test\n"
+        "  sudo microceph.radosgw-admin key create --uid=test --key-type=s3 "
+        "--access-key fooAccessKey --secret-key fooSecretKey\n"
+        "fi\n"
+        "tmpfile=$(mktemp /tmp/rgw-object.XXXXXX)\n"
+        'echo hello-radosgw > "${tmpfile}"\n'
+        's3_args=(--host localhost --host-bucket="localhost/%(bucket)" '
+        "--access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl)\n"
+        's3cmd "${s3_args[@]}" mb s3://testbucket || true\n'
+        's3cmd "${s3_args[@]}" put -P "${tmpfile}" s3://testbucket/"${filename}.txt"\n'
+        'curl -s http://localhost/testbucket/"${filename}.txt" | grep -F hello-radosgw\n'
+    )
+    juju.ssh(unit_name, "bash", "-c", script)
 
 
 def assert_osd_count(
@@ -188,3 +248,11 @@ def assert_osd_count(
         return status
 
     return _check()
+
+
+def find_repo_root(start: Path, dirname: str = "terraform") -> Path:
+    """Locate repository root by walking upward until a dir is found."""
+    for path in (start, *start.parents):
+        if (path / dirname).is_dir():
+            return path
+    raise FileNotFoundError("Could not locate repository root containing directory")
