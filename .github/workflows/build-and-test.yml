@@ -576,6 +576,23 @@ jobs:
             exit 1
           fi
 
+      - name: Collect logs
+        if: failure()
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microceph_juju_single_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
+
+
   snap-upgrade-test:
     needs:
       - lint
