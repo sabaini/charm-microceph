@@ -526,21 +526,21 @@ jobs:
           set -eux
           date
           # constraints to deploy on virtual machine.
-          juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,3' --constraints="virt-type=virtual-machine root-disk=50G mem=8G"
+          juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=8G"
           # wait for charm to bootstrap and OSD devices to enroll.
           juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
-          bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 3
+          bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
       - name: Remove Juju Storage
         run: |
           set -eux
           juju detach-storage osd-standalone/0
-          juju wait-for unit microceph/0 --query='workload-status=="blocked"'
+          juju wait-for unit microceph/0 --timeout '20m' --query='workload-message=="(workload) charm is ready"'
           # wait before completely removing the storage.
           sleep 1m
           juju remove-storage osd-standalone/0
-          bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 2
+          bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 5
           date
 
       - name: Add another OSD
@@ -548,7 +548,7 @@ jobs:
           set -eux
           juju add-storage microceph/0 osd-standalone='2G,1'
           juju wait-for unit microceph/0 --timeout '20m' --query='workload-message=="(workload) charm is ready"'
-          bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 3
+          bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
       - name: Add and relate RadosGW charm
