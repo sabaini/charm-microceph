@@ -824,16 +824,16 @@ jobs:
           set -eux
           date
           # constraints to deploy on virtual machine.
-          juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,3' --constraints="virt-type=virtual-machine root-disk=50G mem=8G"
+          juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=8G"
           # wait for charm to bootstrap and OSD devices to enroll.
           juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
-          bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 3
+          bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
       - name: Add and relate CephFS charm
         run: |
           set -eux
-          juju deploy ch:ceph-fs
+          juju deploy ch:ceph-fs --base ubuntu@24.04 --channel squid/edge
           # wait for charm to bootstrap.
           juju wait-for unit ceph-fs/0 --query='workload-status=="blocked"' --timeout=30m
           juju integrate ceph-fs:ceph-mds microceph:mds
