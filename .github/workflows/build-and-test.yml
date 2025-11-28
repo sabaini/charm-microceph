@@ -554,10 +554,10 @@ jobs:
       - name: Add and relate RadosGW charm
         run: |
           set -eux
-          juju deploy ch:ceph-radosgw
-          sleep 120
+          juju deploy ch:ceph-radosgw --base ubuntu@24.04 --channel squid/edge
+          sleep 30
           juju integrate ceph-radosgw microceph
-          sleep 420
+          juju wait-for unit ceph-radosgw/0 --query='workload-status=="active"' --timeout=20m
           for i in $(seq 1 20); do
             rgwpools=$(juju ssh microceph/0 -- "sudo microceph.ceph osd pool ls")
             if echo "$rgwpools" | grep -E 'rgw' ; then
