@@ -26,7 +26,7 @@ jobs:
       - name: Deploy MicroCeph charm from stable
         run: |
           set -eux
-          juju deploy -n 3 microceph --channel "${STABLE_CHANNEL}" --config default-pool-size=1
+          juju deploy -n 3 microceph --channel "${STABLE_CHANNEL}"
           ./tests/scripts/ci_helpers.sh wait_for_microceph_bootstrap
           juju status
 
@@ -34,7 +34,7 @@ jobs:
         run: |
           set -eux
           for i in 0 1 2; do
-            juju run microceph/$i add-osd loop-spec=4G,1 --wait=2m
+            juju run microceph/$i add-osd loop-spec=3G,1 --wait=3m
           done
           juju wait-for application microceph \
             --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' \
