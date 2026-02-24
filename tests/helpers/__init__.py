@@ -274,10 +274,7 @@ def ceph_health_mismatch_reason(
         return f"health is {current!r}; expected HEALTH_OK"
 
     if not allowed_warn_checks:
-        return (
-            "health is HEALTH_WARN and no warn checks are allowed "
-            f"(checks: {check_names})"
-        )
+        return "health is HEALTH_WARN and no warn checks are allowed " f"(checks: {check_names})"
 
     if not isinstance(checks, dict) or not checks:
         return (
