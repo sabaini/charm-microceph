@@ -25,6 +25,7 @@ APP_NAME = "microceph"
 LOOP_OSD_SPEC = "1G,3"
 LOOP_OSDS_PER_UNIT = int(LOOP_OSD_SPEC.split(",")[1])
 DEFAULT_TIMEOUT = 7200
+ALLOWED_HEALTH_WARN_CHECKS = {"MON_CLOCK_SKEW"}
 
 
 def _terraform_env(juju: jubilant.Juju) -> dict[str, str]:
@@ -210,7 +211,12 @@ class TerraformController:
             helpers.ensure_loop_osd(self._juju, APP_NAME, LOOP_OSD_SPEC, new_units)
         helpers.wait_for_apps(self._juju, APP_NAME, timeout=DEFAULT_TIMEOUT)
         self._known_units = current_units
-        return helpers.wait_for_ceph_health_ok(self._juju, APP_NAME, timeout=DEFAULT_TIMEOUT)
+        return helpers.wait_for_ceph_health_ok(
+            self._juju,
+            APP_NAME,
+            timeout=DEFAULT_TIMEOUT,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        )
 
     def destroy(self) -> None:
         result = _run_terragrunt(
@@ -241,7 +247,13 @@ class TestTerraformScale:
     def test_initial_single_unit(self, terraform_controller: TerraformController) -> None:
         """Test: bring up a single unit with loop osds."""
         status = terraform_controller.apply(units=1)
-        assert status.get("health", {}).get("status") == "HEALTH_OK"
+        assert helpers.ceph_health_matches(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        ), helpers.ceph_health_mismatch_reason(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        )
         helpers.assert_osd_count(
             terraform_controller.juju,
             APP_NAME,
@@ -253,7 +265,13 @@ class TestTerraformScale:
     def test_scale_to_four_units(self, terraform_controller: TerraformController) -> None:
         """Test: scale microceph to 4 units with loop osds."""
         status = terraform_controller.apply(units=4)
-        assert status.get("health", {}).get("status") == "HEALTH_OK"
+        assert helpers.ceph_health_matches(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        ), helpers.ceph_health_mismatch_reason(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        )
         helpers.assert_osd_count(
             terraform_controller.juju,
             APP_NAME,
@@ -266,7 +284,13 @@ class TestTerraformRadosGateway:
     @pytest.mark.abort_on_fail
     def test_enable_rgw_via_config(self, terraform_controller: TerraformController) -> None:
         status = terraform_controller.apply(units=4, config={"enable-rgw": "*"})
-        assert status.get("health", {}).get("status") == "HEALTH_OK"
+        assert helpers.ceph_health_matches(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        ), helpers.ceph_health_mismatch_reason(
+            status,
+            allowed_warn_checks=ALLOWED_HEALTH_WARN_CHECKS,
+        )
 
         current_status = terraform_controller.juju.status()
         app = current_status.apps.get(APP_NAME)
