@@ -228,19 +228,107 @@ def fetch_ceph_status(juju: jubilant.Juju, app: str) -> dict[str, Any]:
     return json.loads(output)
 
 
+def ceph_health_matches(
+    status: dict[str, Any], *, allowed_warn_checks: set[str] | None = None
+) -> bool:
+    """Return whether Ceph status is healthy for test expectations.
+
+    A status is considered healthy if either:
+    - ``health.status`` is ``HEALTH_OK``; or
+    - ``health.status`` is ``HEALTH_WARN`` and all reported check names are in
+      ``allowed_warn_checks``.
+    """
+    health = status.get("health", {})
+    current = health.get("status")
+    if current == "HEALTH_OK":
+        return True
+
+    if current != "HEALTH_WARN" or not allowed_warn_checks:
+        return False
+
+    checks = health.get("checks")
+    if not isinstance(checks, dict) or not checks:
+        return False
+
+    return set(checks).issubset(allowed_warn_checks)
+
+
+def ceph_health_mismatch_reason(
+    status: dict[str, Any], *, allowed_warn_checks: set[str] | None = None
+) -> str:
+    """Return a human-readable reason when Ceph health is not acceptable."""
+    health = status.get("health", {})
+    current = health.get("status")
+    checks = health.get("checks")
+    check_names = sorted(checks.keys()) if isinstance(checks, dict) else []
+
+    if current == "HEALTH_OK":
+        return "health is HEALTH_OK"
+
+    if current != "HEALTH_WARN":
+        if allowed_warn_checks:
+            return (
+                f"health is {current!r}; expected HEALTH_OK or HEALTH_WARN with checks "
+                f"subset of {sorted(allowed_warn_checks)}"
+            )
+        return f"health is {current!r}; expected HEALTH_OK"
+
+    if not allowed_warn_checks:
+        return "health is HEALTH_WARN and no warn checks are allowed " f"(checks: {check_names})"
+
+    if not isinstance(checks, dict) or not checks:
+        return (
+            "health is HEALTH_WARN but no checks were reported; "
+            f"allowed checks: {sorted(allowed_warn_checks)}"
+        )
+
+    disallowed = sorted(set(checks) - allowed_warn_checks)
+    if disallowed:
+        return (
+            f"health is HEALTH_WARN with disallowed checks {disallowed}; "
+            f"all checks: {check_names}; allowed checks: {sorted(allowed_warn_checks)}"
+        )
+
+    return (
+        f"health is HEALTH_WARN with checks {check_names}, all allowed by policy "
+        f"{sorted(allowed_warn_checks)}"
+    )
+
+
 def wait_for_ceph_health_ok(
-    juju: jubilant.Juju, app: str, timeout: int = DEFAULT_TIMEOUT
+    juju: jubilant.Juju,
+    app: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    *,
+    allowed_warn_checks: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Wait until ``ceph status`` for *app* reports ``HEALTH_OK``."""
+    """Wait until ``ceph status`` for *app* is acceptable for tests.
+
+    By default this requires strict ``HEALTH_OK``.
+    Optionally, callers can allow specific warning checks via
+    ``allowed_warn_checks``.
+    """
     deadline = time.time() + timeout
     last_status: dict[str, Any] = {}
     while time.time() < deadline:
         last_status = fetch_ceph_status(juju, app)
-        health = last_status.get("health", {})
-        if health.get("status") == "HEALTH_OK":
+        if ceph_health_matches(last_status, allowed_warn_checks=allowed_warn_checks):
             return last_status
         time.sleep(15)
-    raise AssertionError(f"Ceph health did not reach HEALTH_OK; last status: {last_status}")
+
+    allowed_msg = (
+        ""
+        if not allowed_warn_checks
+        else f" (allowing HEALTH_WARN checks: {sorted(allowed_warn_checks)})"
+    )
+    reason = ceph_health_mismatch_reason(
+        last_status,
+        allowed_warn_checks=allowed_warn_checks,
+    )
+    raise AssertionError(
+        "Ceph health did not become acceptable"
+        f"{allowed_msg}; last evaluation: {reason}; last status: {last_status}"
+    )
 
 
 def exercise_rgw(juju: jubilant.Juju, unit_name: str, filename: str = "test") -> None:
