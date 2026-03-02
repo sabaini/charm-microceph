@@ -55,6 +55,7 @@ def _build_charm(
     if not rebuild and artifact.exists():
         return artifact.resolve()
 
+    helpers.ensure_charmcraft()
     subprocess.run(["charmcraft", "-v", "pack"], check=True, cwd=charm_dir)
     built_charms = sorted(
         charm_dir.glob("*.charm"), key=lambda charm: charm.stat().st_mtime, reverse=True
