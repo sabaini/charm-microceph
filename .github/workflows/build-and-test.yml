@@ -1485,6 +1485,8 @@ jobs:
         run: |
           set -eux
           date
+          before_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          before_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
           juju refresh microceph --channel squid/candidate
           sleep 60
           # Initial wait
@@ -1494,12 +1496,22 @@ jobs:
           juju status
           # Fail if goal status not reached
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
+          after_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          after_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
+          echo "microceph charm before refresh: origin=${before_origin}, rev=${before_rev}"
+          echo "microceph charm after refresh: origin=${after_origin}, rev=${after_rev}"
+          if [[ "$before_rev" == "$after_rev" ]]; then
+            echo "Expected a charm revision change when refreshing to squid/candidate, but revision stayed at ${after_rev}"
+            exit 1
+          fi
           date
 
       - name: Test successful upgrade to locally built charm
         run: |
           set -eux
           date
+          before_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          before_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
           juju refresh microceph --path ~/artifacts/microceph.charm
           sleep 60
           # Initial wait
@@ -1509,6 +1521,14 @@ jobs:
           juju status
           # Fail if goal status not reached
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
+          after_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          after_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
+          echo "microceph charm before refresh: origin=${before_origin}, rev=${before_rev}"
+          echo "microceph charm after refresh: origin=${after_origin}, rev=${after_rev}"
+          if [[ "$before_rev" == "$after_rev" && "$before_origin" == "$after_origin" ]]; then
+            echo "Expected local charm refresh to change deployed charm metadata, but origin/revision were unchanged"
+            exit 1
+          fi
           date
 
 
