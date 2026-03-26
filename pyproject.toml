@@ -1,3 +1,24 @@
+[project]
+name = "microceph"
+version = "0.1.0"
+requires-python = "~=3.12.0"
+dependencies = [
+    "cryptography",
+    "ops<3.4",
+    "pyroute2",
+    "netifaces",
+    "jsonschema",
+    "tenacity",
+    "jinja2",
+    "pydantic>=2.12,<2.13",
+    "cosl==0.0.55",
+    "requests<2.32",
+    "ops_sunbeam@git+https://opendev.org/openstack/sunbeam-charms#subdirectory=ops-sunbeam",
+    "charms.ceph@git+https://github.com/canonical/ceph-charms#subdirectory=charms.ceph",
+    "requests-unixsocket",
+    "urllib3<2",
+]
+
 # Testing tools configuration
 [tool.coverage.run]
 branch = true
