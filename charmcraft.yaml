@@ -19,6 +19,10 @@ platforms:
 
 parts:
   charm:
+    build-environment:
+      - CARGO: /usr/bin/cargo-1.85
+      - RUSTC: /usr/bin/rustc-1.85
+      - MATURIN_NO_INSTALL_RUST: "1"
     build-packages:
       - git
       - libffi-dev
