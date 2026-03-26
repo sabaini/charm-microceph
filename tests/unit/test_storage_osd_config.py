@@ -123,7 +123,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=1200,
         )
 
     @patch("utils.subprocess")
@@ -141,7 +141,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=1200,
         )
 
     @patch("utils.subprocess")
@@ -159,7 +159,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=1200,
         )
 
     @patch("utils.subprocess")
@@ -185,7 +185,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=1200,
         )
 
     @patch("utils.subprocess")
@@ -201,7 +201,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=1200,
         )
 
     # --- No devices matched (not an error) ---
@@ -256,7 +256,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
 
         subprocess.CalledProcessError = CalledProcessError
         subprocess.TimeoutExpired = TimeoutExpired
-        subprocess.run.side_effect = TimeoutExpired(cmd=["microceph"], timeout=180)
+        subprocess.run.side_effect = TimeoutExpired(cmd=["microceph"], timeout=1200)
 
         event = self._call_handler()
         event.defer.assert_not_called()

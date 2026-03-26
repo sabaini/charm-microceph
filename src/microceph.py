@@ -37,6 +37,8 @@ MAJOR_VERSIONS = {
     "19": "squid",
 }
 
+OSD_MATCH_CMD_TIMEOUT = 1200
+
 
 def is_ready() -> bool:
     """Check if microceph snap is installed and bootstrapped/joined."""
@@ -403,7 +405,7 @@ def add_osd_match_cmd(
         cmd.append("--encrypt")
     if dry_run:
         cmd.append("--dry-run")
-    return utils.run_cmd(cmd)
+    return utils.run_cmd(cmd, timeout=OSD_MATCH_CMD_TIMEOUT)
 
 
 def get_snap_info(snap_name):
