@@ -50,13 +50,16 @@ class TestUpdateStatusUpgradeReconcile(testbase.TestBaseCharm):
 
     def test_update_status_retries_pending_upgrade(self):
         self.ready_for_service.return_value = True
-        with patch.object(
-            self.harness.charm.cluster_upgrades,
-            "upgrade_requested",
-            return_value=True,
-        ), patch.object(
-            self.harness.charm, "handle_config_leader_charm_upgrade"
-        ) as mock_upgrade_handler:
+        with (
+            patch.object(
+                self.harness.charm.cluster_upgrades,
+                "upgrade_requested",
+                return_value=True,
+            ),
+            patch.object(
+                self.harness.charm, "handle_config_leader_charm_upgrade"
+            ) as mock_upgrade_handler,
+        ):
             self.harness.charm.on.update_status.emit()
 
         mock_upgrade_handler.assert_called_once()
@@ -115,13 +118,16 @@ class TestUpdateStatusUpgradeReconcile(testbase.TestBaseCharm):
             BlockedStatus(f"{charm.cluster.UPGRADE_HEALTH_BLOCKED_MSG_PREFIX}: HEALTH_WARN")
         )
 
-        with patch.object(
-            self.harness.charm.cluster_upgrades,
-            "upgrade_requested",
-            return_value=False,
-        ), patch.object(
-            self.harness.charm, "handle_config_leader_charm_upgrade"
-        ) as mock_upgrade_handler:
+        with (
+            patch.object(
+                self.harness.charm.cluster_upgrades,
+                "upgrade_requested",
+                return_value=False,
+            ),
+            patch.object(
+                self.harness.charm, "handle_config_leader_charm_upgrade"
+            ) as mock_upgrade_handler,
+        ):
             self.harness.charm.on.update_status.emit()
 
         self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
