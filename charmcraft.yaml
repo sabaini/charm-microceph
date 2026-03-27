@@ -18,19 +18,18 @@ platforms:
     build-for: [s390x]
 
 parts:
+  files:
+    plugin: dump
+    source: .
+    stage:
+      - files
   charm:
+    after:
+      - files
+    plugin: uv
+    source: .
+    build-snaps:
+      - astral-uv
     build-packages:
       - git
-      - libffi-dev
-      - libssl-dev
-      - pkg-config
-      - rustc
-      - cargo
-    charm-binary-python-packages:
-      - cryptography
-      - jsonschema
-      - jinja2
-      - git+https://opendev.org/openstack/sunbeam-charms/#egg=ops-sunbeam&subdirectory=ops-sunbeam
-      - pydantic
-      - pydantic-core
 
