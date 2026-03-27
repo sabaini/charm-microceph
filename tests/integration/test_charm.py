@@ -28,13 +28,14 @@ logger = logging.getLogger(__name__)
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
-CEPHCLIENT_APP = "cephclient"
+# Default concrete client charm
+CEPHCLIENT_APP = "johnny"
 LOOP_OSD_SPEC = "1G,3"
 
 
 @pytest.fixture(scope="module")
-def deployed_apps(juju: jubilant.Juju, microceph_charm: Path, cephclient_charm: Path):
-    """Deploy MicroCeph and the cephclient tester charm."""
+def deployed_apps(juju: jubilant.Juju, microceph_charm: Path, cephclient_deployment):
+    """Deploy MicroCeph and the selected Ceph client test charm implementation."""
     logger.info("Deploying charms: %s and %s", APP_NAME, CEPHCLIENT_APP)
     helpers.deploy_microceph(
         juju,
@@ -43,7 +44,11 @@ def deployed_apps(juju: jubilant.Juju, microceph_charm: Path, cephclient_charm: 
         loop_osd_spec=LOOP_OSD_SPEC,
         timeout=1000,
     )
-    juju.deploy(str(cephclient_charm), CEPHCLIENT_APP)
+    juju.deploy(
+        cephclient_deployment.charm,
+        CEPHCLIENT_APP,
+        channel=cephclient_deployment.channel,
+    )
     with helpers.fast_forward(juju):
         helpers.wait_for_apps(juju, APP_NAME, CEPHCLIENT_APP, timeout=1000)
     return (APP_NAME, CEPHCLIENT_APP)

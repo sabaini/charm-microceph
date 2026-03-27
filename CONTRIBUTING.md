@@ -22,6 +22,23 @@ tox -e integration   # integration tests
 tox                  # runs 'lint' and 'unit' environments
 ```
 
+Integration tests deploy a generic Ceph client test charm. The default
+implementation is `johnny` from Charmhub (`edge` channel). For local
+development you can override that with either a built charm artifact or a local
+source checkout:
+
+```shell
+export CLIENT_CHARM=/path/to/client.charm
+# or
+export CLIENT_SOURCE=/path/to/client-source
+# optional Charmhub overrides
+export CLIENT_NAME=johnny
+export CLIENT_CHANNEL=edge
+```
+
+If you keep a sibling `johnny` checkout next to this repository, the integration
+fixtures will automatically build and use it.
+
 ## Build the charm
 
 Build the charm in this git repository using:

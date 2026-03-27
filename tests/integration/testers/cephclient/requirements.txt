@@ -1,2 +1,0 @@
-ops
-git+https://opendev.org/openstack/charm-ops-interface-ceph-client#egg=interface_ceph_client

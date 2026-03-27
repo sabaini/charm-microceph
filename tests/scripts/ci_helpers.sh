@@ -306,74 +306,186 @@ function wait_for_microceph_bootstrap() {
     juju wait-for application microceph --query='name=="microceph" && (status=="active" || status=="idle")' --timeout=10m
 }
 
-function wait_for_vms() {
-  local expected=$1
-  local timeout=$2
-  local interval=20
-  local start=$SECONDS
-  local running
+function dump_vm_diagnostics() {
+  local vm="${1?missing}"
 
-  # wait for Running state and inet
+  echo "--- diagnostics for ${vm} ---"
+  lxc info "$vm" || true
+  lxc list "$vm" || true
+  lxc exec "$vm" -- cloud-init status || true
+  lxc exec "$vm" -- ip -4 addr show || true
+  lxc exec "$vm" -- ls -la /home || true
+  lxc exec "$vm" -- ls -la /home/ubuntu || true
+  lxc exec "$vm" -- ls -la /home/ubuntu/.ssh || true
+  lxc exec "$vm" -- journalctl -u cloud-init --no-pager -n 200 || true
+}
+
+function wait_for_vm_running() {
+  local vm="${1?missing}"
+  local timeout="${2?missing}"
+  local start=$SECONDS
+
   while :; do
-    running=$(lxc list --format=json \
-      | jq '[ .[]
-          | select(
-              .state.status=="Running" and
-              (.state.network[]?.addresses[]? | select(.family=="inet"))
-            )
-        ] | length')
-    if (( running >= expected )); then
-      echo "$running/$expected VMs are Running"
-      break
+    if lxc list "$vm" --format=json | jq -e '.[0].state.status == "Running"' > /dev/null 2>&1; then
+      return 0
     fi
 
     if (( SECONDS - start >= timeout )); then
-      echo "timeout after ${timeout}s: only $running/$expected VMs are Running"
+      echo "timeout waiting for ${vm} to reach Running state"
+      dump_vm_diagnostics "$vm"
       return 1
     fi
-    sleep $interval
+    sleep 5
   done
+}
 
-  vms=( $(lxc ls -c sn | awk '/RUNNING/ {print $4}') )
+function wait_for_vm_exec_ready() {
+  local vm="${1?missing}"
+  local timeout="${2?missing}"
+  local start=$SECONDS
 
-  # per-VM agent wait
+  until lxc exec "$vm" -- true &>/dev/null; do
+    if (( SECONDS - start >= timeout )); then
+      echo "timeout waiting for agent on ${vm}"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+function wait_for_vm_cloud_init() {
+  local vm="${1?missing}"
+  local timeout="${2?missing}"
+  local start=$SECONDS
+  local elapsed remaining rc
+
+  while :; do
+    elapsed=$((SECONDS - start))
+    remaining=$((timeout - elapsed))
+    if (( remaining <= 0 )); then
+      echo "timeout waiting for cloud-init on ${vm}"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
+
+    if timeout "${remaining}s" lxc exec "$vm" -- cloud-init status --wait &>/dev/null; then
+      return 0
+    fi
+
+    rc=$?
+    if (( rc == 124 )); then
+      echo "timeout waiting for cloud-init on ${vm}"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+function wait_for_vm_path() {
+  local vm="${1?missing}"
+  local path="${2?missing}"
+  local timeout="${3?missing}"
+  local start=$SECONDS
+
+  while :; do
+    if lxc exec "$vm" -- test -d "$path" &>/dev/null; then
+      return 0
+    fi
+
+    if (( SECONDS - start >= timeout )); then
+      echo "timeout waiting for path ${path} on ${vm}"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+function wait_for_vm_ipv4_in_subnet() {
+  local vm="${1?missing}"
+  local subnet_prefix="${2?missing}"
+  local timeout="${3?missing}"
+  local start=$SECONDS
+
+  while :; do
+    if lxc list "$vm" --format=json | jq -e --arg prefix "$subnet_prefix" '
+      .[0].state.network[]?.addresses[]?
+      | select(.family == "inet" and (.address | startswith($prefix)))
+    ' > /dev/null 2>&1; then
+      return 0
+    fi
+
+    if (( SECONDS - start >= timeout )); then
+      echo "timeout waiting for ${vm} to acquire IPv4 in ${subnet_prefix}0/24"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+function wait_for_vms() {
+  local timeout="${1?missing}"
+  shift
+  local vms=("$@")
+
+  if [[ ${#vms[@]} -eq 0 ]]; then
+    echo "wait_for_vms requires at least one VM name"
+    return 1
+  fi
+
   for vm in "${vms[@]}"; do
-    # echo $vm
-    start=$SECONDS
-    until lxc exec "$vm" -- true &>/dev/null; do
-      (( SECONDS - start >= timeout )) && {
-        echo "timeout waiting for agent on $vm"; return 1;
-      }
-      sleep $interval
-    done
+    wait_for_vm_running "$vm" "$timeout" || return 1
+    wait_for_vm_exec_ready "$vm" "$timeout" || return 1
+    wait_for_vm_cloud_init "$vm" "$timeout" || return 1
+    wait_for_vm_path "$vm" /home/ubuntu "$timeout" || return 1
+    wait_for_vm_ipv4_in_subnet "$vm" "10.85.4." "$timeout" || return 1
+    lxc exec "$vm" -- install -d -m 700 /home/ubuntu/.ssh
   done
-      
 
-  echo "All $expected VMs are up with cloud-init finished."
+  echo "All requested VMs are running with cloud-init complete and cluster IPs assigned."
+}
+
+function vm_cluster_ip() {
+  local vm="${1?missing}"
+  lxc list "$vm" --format=json | jq -r '
+    .[0].state.network[]?.addresses[]?
+    | select(.family == "inet" and (.address | startswith("10.85.4.")))
+    | .address
+  ' | head -n1
 }
 
 function prepare_3_vms() {
-  set -eux
+  set -euxo pipefail
+  local vms=(node01 node02 node03)
 
-  for i in $(seq 1 3); do
-    lxc launch --vm ubuntu:24.04 "node0$i" -c limits.memory=8GB -c limits.cpu=4 -d root,size=25GB
+  for vm in "${vms[@]}"; do
+    lxc launch --vm ubuntu:24.04 "$vm" -c limits.memory=8GB -c limits.cpu=4 -d root,size=25GB
   done
 
-  # wait for 4 vms (3+1 juju container) to be up under 300s
-  wait_for_vms 4 300 
+  wait_for_vms 300 "${vms[@]}"
   lxc ls
 
   ssh-keygen -t rsa -N "" -f ./lxdkey
-  for i in $(seq 1 3); do
-    lxc file push ./lxdkey* "node0$i"/home/ubuntu/.ssh/
-    lxc exec "node0$i" -- sh -c "cat /home/ubuntu/.ssh/lxdkey.pub >> /home/ubuntu/.ssh/authorized_keys"
-    lxc exec "node0$i" -- sh -c "cat /home/ubuntu/.ssh/authorized_keys"
+  for vm in "${vms[@]}"; do
+    lxc exec "$vm" -- install -d -m 700 /home/ubuntu/.ssh
+    lxc file push ./lxdkey ./lxdkey.pub "$vm"/home/ubuntu/.ssh/
+    lxc exec "$vm" -- sh -c "cat /home/ubuntu/.ssh/lxdkey.pub >> /home/ubuntu/.ssh/authorized_keys"
+    lxc exec "$vm" -- chmod 600 /home/ubuntu/.ssh/authorized_keys
+    lxc exec "$vm" -- sh -c "cat /home/ubuntu/.ssh/authorized_keys"
   done
 
-  # get only test vm addresses
-  vm_ips=$(lxc ls -f json | jq '.[]?.state.network[]?.addresses[]? | select(.address | test("10.85.4")) | .address' | tr -d "\"")
   stat -c "%a %n" ./tests/scripts/assets/*
-  for vm_ip in $vm_ips; do
+  for vm in "${vms[@]}"; do
+    vm_ip=$(vm_cluster_ip "$vm")
+    if [[ -z "$vm_ip" ]]; then
+      echo "Did not find cluster IP for ${vm}"
+      dump_vm_diagnostics "$vm"
+      return 1
+    fi
     ssh -o "StrictHostKeyChecking=no" "ubuntu@$vm_ip" -i ./lxdkey -f ls
     juju add-machine "ssh:ubuntu@$vm_ip" --private-key ./lxdkey --public-key ./lxdkey.pub
     sleep 10s
