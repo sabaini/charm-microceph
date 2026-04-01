@@ -123,7 +123,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -141,7 +141,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -159,7 +159,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -185,7 +185,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -201,7 +201,7 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     # --- No devices matched (not an error) ---

@@ -335,7 +335,7 @@ def add_osd_cmd(
         _setup_dm_crypt()
         cmd.append("--encrypt")
 
-    utils.run_cmd(cmd)
+    utils.run_cmd(cmd, timeout=900)
 
 
 def _setup_dm_crypt() -> None:
@@ -408,7 +408,7 @@ def add_osd_match_cmd(
         cmd.append("--encrypt")
     if dry_run:
         cmd.append("--dry-run")
-    return utils.run_cmd(cmd)
+    return utils.run_cmd(cmd, timeout=900)
 
 
 def get_snap_info(snap_name):
