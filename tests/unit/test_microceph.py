@@ -248,14 +248,15 @@ class TestMicroCeph(unittest.TestCase):
     def test_add_osd_cmd(self, run_cmd):
         # Test default call
         microceph.add_osd_cmd("loop,4G,3")
-        run_cmd.assert_called_with(["microceph", "disk", "add", "loop,4G,3"])
+        run_cmd.assert_called_with(["microceph", "disk", "add", "loop,4G,3"], timeout=900)
 
     @patch("utils.run_cmd")
     def test_add_osd_cmd_with_wal(self, run_cmd):
         # Test with WAL device
         microceph.add_osd_cmd("loop,4G,3", wal_dev="/dev/sdb")
         run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "loop,4G,3", "--wal-device", "/dev/sdb", "--wal-wipe"]
+            ["microceph", "disk", "add", "loop,4G,3", "--wal-device", "/dev/sdb", "--wal-wipe"],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
@@ -263,14 +264,15 @@ class TestMicroCeph(unittest.TestCase):
         # Test with DB device
         microceph.add_osd_cmd("loop,4G,3", db_dev="/dev/sdc")
         run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "loop,4G,3", "--db-device", "/dev/sdc", "--db-wipe"]
+            ["microceph", "disk", "add", "loop,4G,3", "--db-device", "/dev/sdc", "--db-wipe"],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
     def test_add_osd_cmd_with_wipe(self, run_cmd):
         # Test with wipe flag
         microceph.add_osd_cmd("loop,4G,3", wipe=True)
-        run_cmd.assert_called_with(["microceph", "disk", "add", "loop,4G,3", "--wipe"])
+        run_cmd.assert_called_with(["microceph", "disk", "add", "loop,4G,3", "--wipe"], timeout=900)
 
     @patch("utils.run_cmd")
     def test_add_osd_cmd_all_options(self, run_cmd):
@@ -289,21 +291,24 @@ class TestMicroCeph(unittest.TestCase):
                 "/dev/sdc",
                 "--db-wipe",
                 "--wipe",
-            ]
+            ],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
     def test_add_osd_match_cmd_basic(self, run_cmd):
         """Test add_osd_match_cmd with basic DSL expression."""
         microceph.add_osd_match_cmd("eq(@type,'nvme')")
-        run_cmd.assert_called_with(["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"])
+        run_cmd.assert_called_with(
+            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"], timeout=900
+        )
 
     @patch("utils.run_cmd")
     def test_add_osd_match_cmd_with_wipe(self, run_cmd):
         """Test add_osd_match_cmd with wipe flag."""
         microceph.add_osd_match_cmd("eq(@type,'nvme')", wipe=True)
         run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--wipe"]
+            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--wipe"], timeout=900
         )
 
     @patch("utils.run_cmd")
@@ -311,7 +316,8 @@ class TestMicroCeph(unittest.TestCase):
         """Test add_osd_match_cmd with encrypt flag."""
         microceph.add_osd_match_cmd("eq(@type,'nvme')", encrypt=True)
         run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--encrypt"]
+            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--encrypt"],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
@@ -319,7 +325,8 @@ class TestMicroCeph(unittest.TestCase):
         """Test add_osd_match_cmd with dry_run flag."""
         microceph.add_osd_match_cmd("eq(@type,'nvme')", dry_run=True)
         run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--dry-run"]
+            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--dry-run"],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
@@ -341,7 +348,8 @@ class TestMicroCeph(unittest.TestCase):
                 "--wipe",
                 "--encrypt",
                 "--dry-run",
-            ]
+            ],
+            timeout=900,
         )
 
     @patch("utils.run_cmd")
@@ -349,7 +357,7 @@ class TestMicroCeph(unittest.TestCase):
         """Test add_osd_match_cmd with complex DSL expression from spec."""
         dsl = "or(and(re(@host,'^compute-'),re(@vendor,'Samsung')),and(re(@host,'^stor-'),re(@vendor,'Seagate')))"
         microceph.add_osd_match_cmd(dsl)
-        run_cmd.assert_called_with(["microceph", "disk", "add", "--osd-match", dsl])
+        run_cmd.assert_called_with(["microceph", "disk", "add", "--osd-match", dsl], timeout=900)
 
     @patch("utils.run_cmd")
     def test_add_osd_match_cmd_returns_output(self, run_cmd):

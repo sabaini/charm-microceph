@@ -338,7 +338,7 @@ class TestCharm(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -363,7 +363,7 @@ class TestCharm(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
         action_event.set_results.assert_called_with(result)
         action_event.fail.assert_called()
@@ -386,7 +386,7 @@ class TestCharm(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("utils.subprocess")
@@ -407,7 +407,7 @@ class TestCharm(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("microceph.utils.snap_has_connection", return_value=True)
@@ -436,7 +436,7 @@ class TestCharm(testbase.TestBaseCharm):
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=900,
         )
 
     @patch("microceph.utils.snap_has_connection", return_value=False)
