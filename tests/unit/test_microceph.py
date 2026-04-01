@@ -272,7 +272,9 @@ class TestMicroCeph(unittest.TestCase):
     def test_add_osd_cmd_with_wipe(self, run_cmd):
         # Test with wipe flag
         microceph.add_osd_cmd("loop,4G,3", wipe=True)
-        run_cmd.assert_called_with(["microceph", "disk", "add", "loop,4G,3", "--wipe"], timeout=900)
+        run_cmd.assert_called_with(
+            ["microceph", "disk", "add", "loop,4G,3", "--wipe"], timeout=900
+        )
 
     @patch("utils.run_cmd")
     def test_add_osd_cmd_all_options(self, run_cmd):
