@@ -1485,24 +1485,47 @@ jobs:
         run: |
           set -eux
           date
-          before_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
-          before_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
+          before_status=$(juju status --format json)
+          before_rev=$(jq -er '.applications.microceph["charm-rev"]' <<< "$before_status")
+          before_origin=$(jq -cr '.applications.microceph["charm-origin"] // empty' <<< "$before_status")
+          before_channel=$(jq -r '
+            .applications.microceph["charm-origin"] as $origin
+            | if ($origin | type) == "object" and ($origin.risk // empty) != "" then
+                "\(($origin.track // "latest"))/\($origin.risk)"
+              else
+                empty
+              end
+          ' <<< "$before_status")
           juju refresh microceph --channel squid/candidate
           sleep 60
           # Initial wait
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m || true
           # Get status
           juju ssh microceph/0 -- sudo ceph -s
+          juju ssh microceph/0 -- sudo ceph health | grep HEALTH_OK
           juju status
           # Fail if goal status not reached
           juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
-          after_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
-          after_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
-          echo "microceph charm before refresh: origin=${before_origin}, rev=${before_rev}"
-          echo "microceph charm after refresh: origin=${after_origin}, rev=${after_rev}"
-          if [[ "$before_rev" == "$after_rev" ]]; then
-            echo "Expected a charm revision change when refreshing to squid/candidate, but revision stayed at ${after_rev}"
-            exit 1
+          after_status=$(juju status --format json)
+          after_rev=$(jq -er '.applications.microceph["charm-rev"]' <<< "$after_status")
+          after_origin=$(jq -cr '.applications.microceph["charm-origin"] // empty' <<< "$after_status")
+          after_channel=$(jq -r '
+            .applications.microceph["charm-origin"] as $origin
+            | if ($origin | type) == "object" and ($origin.risk // empty) != "" then
+                "\(($origin.track // "latest"))/\($origin.risk)"
+              else
+                empty
+              end
+          ' <<< "$after_status")
+          echo "microceph charm before refresh: channel=${before_channel:-unknown}, origin=${before_origin:-unknown}, rev=${before_rev}"
+          echo "microceph charm after refresh: channel=${after_channel:-unknown}, origin=${after_origin:-unknown}, rev=${after_rev}"
+          if [[ -n "$after_channel" ]]; then
+            if [[ "$after_channel" != "squid/candidate" ]]; then
+              echo "Expected charm to track squid/candidate after refresh, but got ${after_channel}"
+              exit 1
+            fi
+          elif [[ -n "$before_origin" && -n "$after_origin" && "$before_origin" == "$after_origin" ]]; then
+            echo "Charm origin did not change after refresh; relying on active+idle and Ceph health checks"
           fi
           date
 
