@@ -14,12 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Validators for OSD device configuration options."""
+"""Validators for config-driven device addition flags."""
 
 from dataclasses import dataclass
 
-# Valid device-add-flags for Phase 1
-VALID_FLAGS = frozenset(["wipe:osd", "encrypt:osd"])
+_FLAG_ATTRS = {
+    "wipe:osd": "wipe_osd",
+    "encrypt:osd": "encrypt_osd",
+    "wipe:wal": "wipe_wal",
+    "encrypt:wal": "encrypt_wal",
+    "wipe:db": "wipe_db",
+    "encrypt:db": "encrypt_db",
+}
+
+VALID_FLAGS = frozenset(_FLAG_ATTRS)
 
 
 @dataclass
@@ -28,6 +36,10 @@ class DeviceAddFlags:
 
     wipe_osd: bool = False
     encrypt_osd: bool = False
+    wipe_wal: bool = False
+    encrypt_wal: bool = False
+    wipe_db: bool = False
+    encrypt_db: bool = False
 
 
 def parse_device_add_flags(flags_str: str) -> DeviceAddFlags:
@@ -55,9 +67,6 @@ def parse_device_add_flags(flags_str: str) -> DeviceAddFlags:
             raise ValueError(
                 f"Unknown flag: '{flag}'. Valid flags: {', '.join(sorted(VALID_FLAGS))}"
             )
-        if flag == "wipe:osd":
-            result.wipe_osd = True
-        elif flag == "encrypt:osd":
-            result.encrypt_osd = True
+        setattr(result, _FLAG_ATTRS[flag], True)
 
     return result

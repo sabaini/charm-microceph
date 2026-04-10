@@ -297,73 +297,138 @@ class TestMicroCeph(unittest.TestCase):
             timeout=900,
         )
 
+    @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_basic(self, run_cmd):
-        """Test add_osd_match_cmd with basic DSL expression."""
-        microceph.add_osd_match_cmd("eq(@type,'nvme')")
-        run_cmd.assert_called_with(
+    def test_add_disk_match_cmd_osd_only(self, run_cmd, setup_dm_crypt):
+        """Test DSL-based disk add for OSD-only requests."""
+        microceph.add_disk_match_cmd("eq(@type,'nvme')")
+        run_cmd.assert_called_once_with(
             ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"], timeout=900
         )
+        setup_dm_crypt.assert_not_called()
 
+    @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_with_wipe(self, run_cmd):
-        """Test add_osd_match_cmd with wipe flag."""
-        microceph.add_osd_match_cmd("eq(@type,'nvme')", wipe=True)
-        run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--wipe"], timeout=900
+    def test_add_disk_match_cmd_with_wal(self, run_cmd, setup_dm_crypt):
+        """Test DSL-based disk add with WAL flags."""
+        microceph.add_disk_match_cmd(
+            "eq(@type,'nvme')",
+            wal_match="eq(@type,'ssd')",
+            wal_size="20GiB",
+            wal_wipe=True,
         )
-
-    @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_with_encrypt(self, run_cmd):
-        """Test add_osd_match_cmd with encrypt flag."""
-        microceph.add_osd_match_cmd("eq(@type,'nvme')", encrypt=True)
-        run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--encrypt"],
+        run_cmd.assert_called_once_with(
+            [
+                "microceph",
+                "disk",
+                "add",
+                "--osd-match",
+                "eq(@type,'nvme')",
+                "--wal-match",
+                "eq(@type,'ssd')",
+                "--wal-size",
+                "20GiB",
+                "--wal-wipe",
+            ],
             timeout=900,
         )
+        setup_dm_crypt.assert_not_called()
 
+    @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_with_dry_run(self, run_cmd):
-        """Test add_osd_match_cmd with dry_run flag."""
-        microceph.add_osd_match_cmd("eq(@type,'nvme')", dry_run=True)
-        run_cmd.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--dry-run"],
+    def test_add_disk_match_cmd_with_db(self, run_cmd, setup_dm_crypt):
+        """Test DSL-based disk add with DB flags."""
+        microceph.add_disk_match_cmd(
+            "eq(@type,'nvme')",
+            db_match="eq(@type,'hdd')",
+            db_size="40GiB",
+            db_wipe=True,
+        )
+        run_cmd.assert_called_once_with(
+            [
+                "microceph",
+                "disk",
+                "add",
+                "--osd-match",
+                "eq(@type,'nvme')",
+                "--db-match",
+                "eq(@type,'hdd')",
+                "--db-size",
+                "40GiB",
+                "--db-wipe",
+            ],
             timeout=900,
         )
+        setup_dm_crypt.assert_not_called()
 
+    @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_all_options(self, run_cmd):
-        """Test add_osd_match_cmd with all options enabled."""
-        microceph.add_osd_match_cmd(
+    def test_add_disk_match_cmd_with_wal_and_db(self, run_cmd, setup_dm_crypt):
+        """Test DSL-based disk add with OSD, WAL, and DB flags."""
+        microceph.add_disk_match_cmd(
             "and(eq(@type,'nvme'),ge(@size,100GiB))",
+            wal_match="eq(@type,'ssd')",
+            wal_size="20GiB",
+            db_match="eq(@type,'hdd')",
+            db_size="40GiB",
             wipe=True,
-            encrypt=True,
             dry_run=True,
+            wal_wipe=True,
+            db_encrypt=True,
         )
-        run_cmd.assert_called_with(
+        run_cmd.assert_called_once_with(
             [
                 "microceph",
                 "disk",
                 "add",
                 "--osd-match",
                 "and(eq(@type,'nvme'),ge(@size,100GiB))",
+                "--wal-match",
+                "eq(@type,'ssd')",
+                "--wal-size",
+                "20GiB",
+                "--wal-wipe",
+                "--db-match",
+                "eq(@type,'hdd')",
+                "--db-size",
+                "40GiB",
+                "--db-encrypt",
                 "--wipe",
-                "--encrypt",
                 "--dry-run",
             ],
             timeout=900,
         )
+        setup_dm_crypt.assert_called_once_with()
 
+    @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_complex_dsl(self, run_cmd):
-        """Test add_osd_match_cmd with complex DSL expression from spec."""
-        dsl = "or(and(re(@host,'^compute-'),re(@vendor,'Samsung')),and(re(@host,'^stor-'),re(@vendor,'Seagate')))"
-        microceph.add_osd_match_cmd(dsl)
-        run_cmd.assert_called_with(["microceph", "disk", "add", "--osd-match", dsl], timeout=900)
+    def test_add_disk_match_cmd_calls_dm_crypt_for_any_encryption(self, run_cmd, setup_dm_crypt):
+        """Any encryption flag triggers dm-crypt setup exactly once."""
+        for kwargs in (
+            {"encrypt": True},
+            {"wal_match": "eq(@type,'ssd')", "wal_size": "20GiB", "wal_encrypt": True},
+            {"db_match": "eq(@type,'hdd')", "db_size": "40GiB", "db_encrypt": True},
+        ):
+            with self.subTest(kwargs=kwargs):
+                run_cmd.reset_mock()
+                setup_dm_crypt.reset_mock()
+                microceph.add_disk_match_cmd("eq(@type,'nvme')", **kwargs)
+                setup_dm_crypt.assert_called_once_with()
+                run_cmd.assert_called_once()
 
-    @patch("utils.run_cmd")
-    def test_add_osd_match_cmd_returns_output(self, run_cmd):
-        """Test add_osd_match_cmd returns command output."""
-        run_cmd.return_value = "Matched 3 devices: /dev/nvme0n1, /dev/nvme1n1, /dev/nvme2n1"
-        result = microceph.add_osd_match_cmd("eq(@type,'nvme')", dry_run=True)
-        self.assertEqual(result, "Matched 3 devices: /dev/nvme0n1, /dev/nvme1n1, /dev/nvme2n1")
+    @patch("microceph.add_disk_match_cmd")
+    def test_add_osd_match_cmd_wrapper(self, add_disk_match_cmd):
+        """add_osd_match_cmd remains a compatibility wrapper."""
+        add_disk_match_cmd.return_value = "matched devices"
+
+        result = microceph.add_osd_match_cmd(
+            "eq(@type,'nvme')", wipe=True, encrypt=True, dry_run=True
+        )
+
+        self.assertEqual(result, "matched devices")
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wipe=True,
+            encrypt=True,
+            dry_run=True,
+        )

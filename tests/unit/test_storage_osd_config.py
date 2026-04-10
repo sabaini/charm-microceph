@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for StorageHandler._on_config_changed_osd_devices."""
+"""Unit tests for StorageHandler config-driven storage reconciliation."""
 
-from subprocess import CalledProcessError, TimeoutExpired
+from subprocess import CalledProcessError
 from unittest.mock import MagicMock, patch
 
 import ops_sunbeam.test_utils as test_utils
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from unit import testbase
 
 import charm
 
 
-class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
-    """Tests for the osd-devices config-changed handler."""
+class TestConfigDrivenStorage(testbase.TestBaseCharm):
+    """Tests for the config-changed storage handler."""
 
     PATCHES = ["subprocess"]
 
@@ -42,234 +43,295 @@ class TestConfigChangedOsdDevices(testbase.TestBaseCharm):
         )
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+        self.storage = self.harness.charm.storage
+
+        patcher = patch.object(self.harness.charm, "ready_for_service", return_value=False)
+        self.ready_for_service = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _setup_ready_charm(self):
         """Set up peer relation and mock ready_for_service to return True."""
         test_utils.add_complete_peer_relation(self.harness)
         self.harness._charm.peers.interface.state.joined = True
-        self.harness.charm.ready_for_service = MagicMock(return_value=True)
+        self.ready_for_service.return_value = True
 
     def _call_handler(self, event=None):
-        """Call the osd-devices config-changed handler with a mock event."""
+        """Call the config-changed handler with a mock event."""
         if event is None:
             event = MagicMock()
-        self.harness.charm.storage._on_config_changed_osd_devices(event)
+        self.storage._on_config_changed_osd_devices(event)
         return event
 
-    # --- Skip when not configured ---
-
-    def test_empty_osd_devices_skips(self):
-        """Handler returns early when osd-devices is empty."""
-        self.harness.update_config({"osd-devices": ""})
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    def test_whitespace_osd_devices_skips(self):
-        """Handler returns early when osd-devices is whitespace."""
-        self.harness.update_config({"osd-devices": "   "})
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    @patch("utils.subprocess")
-    def test_unchanged_config_skips_snap_call(self, subprocess):
-        """Handler skips snap call when osd-devices config is unchanged."""
-        self._setup_ready_charm()
+    def test_normalize_storage_config_trims_and_includes_waldb(self):
+        """Normalization trims whitespace and includes WAL/DB settings."""
         self.harness.update_config(
-            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "wipe:osd"}
+            {
+                "osd-devices": "  eq(@type,'nvme')  ",
+                "wal-devices": " eq(@type,'ssd') ",
+                "db-devices": " eq(@type,'hdd') ",
+                "wal-size": " 20GiB ",
+                "db-size": " 40GiB ",
+                "device-add-flags": " wipe:osd , encrypt:wal , wipe:db ",
+            }
         )
-        self.harness.charm.storage._stored.last_osd_devices = "eq(@type,'nvme')"
-        self.harness.charm.storage._stored.last_wipe_osd = True
-        self.harness.charm.storage._stored.last_encrypt_osd = False
 
-        subprocess.run.reset_mock()
-        self._call_handler()
+        self.assertEqual(
+            self.storage._normalize_storage_config(),
+            {
+                "osd_match": "eq(@type,'nvme')",
+                "wal_match": "eq(@type,'ssd')",
+                "db_match": "eq(@type,'hdd')",
+                "wal_size": "20GiB",
+                "db_size": "40GiB",
+                "flags": {
+                    "wipe_osd": True,
+                    "encrypt_osd": False,
+                    "wipe_wal": False,
+                    "encrypt_wal": True,
+                    "wipe_db": True,
+                    "encrypt_db": False,
+                },
+            },
+        )
 
-        subprocess.run.assert_not_called()
+    def test_normalize_storage_config_ignores_waldb_without_osd(self):
+        """WAL/DB config is ignored entirely when osd-devices is empty."""
+        self.harness.update_config(
+            {
+                "osd-devices": "   ",
+                "wal-devices": "eq(@type,'ssd')",
+                "db-devices": "eq(@type,'hdd')",
+                "wal-size": "20GiB",
+                "db-size": "40GiB",
+                "device-add-flags": "wipe:wal,encrypt:db",
+            }
+        )
 
-    def test_empty_osd_devices_resets_config_cache(self):
-        """Handler clears cached config when osd-devices is empty."""
-        self.harness.charm.storage._stored.last_osd_devices = "eq(@type,'nvme')"
-        self.harness.charm.storage._stored.last_wipe_osd = True
-        self.harness.charm.storage._stored.last_encrypt_osd = True
-        self.harness.update_config({"osd-devices": "", "device-add-flags": "wipe:osd"})
+        self.assertEqual(
+            self.storage._normalize_storage_config(),
+            {
+                "osd_match": None,
+                "wal_match": None,
+                "db_match": None,
+                "wal_size": None,
+                "db_size": None,
+                "flags": {
+                    "wipe_osd": False,
+                    "encrypt_osd": False,
+                    "wipe_wal": False,
+                    "encrypt_wal": False,
+                    "wipe_db": False,
+                    "encrypt_db": False,
+                },
+            },
+        )
 
-        self._call_handler()
+    def test_empty_osd_devices_resets_signature_cache(self):
+        """Clearing osd-devices clears the cached storage signature."""
+        self.storage._stored.last_storage_config_signature = "cached-signature"
 
-        self.assertEqual(self.harness.charm.storage._stored.last_osd_devices, "")
-        self.assertFalse(self.harness.charm.storage._stored.last_wipe_osd)
-        self.assertFalse(self.harness.charm.storage._stored.last_encrypt_osd)
+        self.harness.update_config(
+            {
+                "osd-devices": "",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+                "device-add-flags": "wipe:wal",
+            }
+        )
 
-    # --- Defer when not ready ---
+        self.assertEqual(self.storage._stored.last_storage_config_signature, "")
 
-    @patch("microceph.is_ready", return_value=False)
-    def test_not_ready_defers(self, _is_ready):
-        """Handler defers when cluster is not ready."""
+    def test_not_ready_defers(self):
+        """Configured storage defers while the cluster is not ready."""
         self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
+
         event = self._call_handler()
+
         event.defer.assert_called_once()
 
-    # --- Successful OSD enrollment ---
-
-    @patch("utils.subprocess")
-    def test_success_calls_add_osd_match(self, subprocess):
-        """Handler calls microceph disk add with the DSL expression."""
-        self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-
-        self._call_handler()
-
-        subprocess.run.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=900,
-        )
-
-    @patch("utils.subprocess")
-    def test_success_with_wipe_flag(self, subprocess):
-        """Handler passes --wipe when wipe:osd flag is set."""
-        self._setup_ready_charm()
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_unchanged_signature_skips_snap_call(self, add_disk_match_cmd):
+        """Cached storage config is not applied again."""
         self.harness.update_config(
-            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "wipe:osd"}
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+                "device-add-flags": "wipe:osd,encrypt:wal",
+            }
         )
+        request = self.storage._normalize_storage_config()
+        self.storage._stored.last_storage_config_signature = (
+            self.storage._storage_config_signature(request)
+        )
+        self._setup_ready_charm()
 
         self._call_handler()
 
-        subprocess.run.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--wipe"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=900,
-        )
+        add_disk_match_cmd.assert_not_called()
 
-    @patch("utils.subprocess")
-    def test_success_with_encrypt_flag(self, subprocess):
-        """Handler passes --encrypt when encrypt:osd flag is set."""
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_waldb_change_reruns_reconciliation(self, add_disk_match_cmd):
+        """Changing WAL/DB settings invalidates the cache."""
         self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
         self.harness.update_config(
-            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "encrypt:osd"}
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+            }
+        )
+        add_disk_match_cmd.reset_mock()
+
+        self.harness.update_config({"wal-size": "30GiB"})
+
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wal_match="eq(@type,'ssd')",
+            wal_size="30GiB",
+            db_match=None,
+            db_size=None,
+            wipe=False,
+            encrypt=False,
+            wal_wipe=False,
+            wal_encrypt=False,
+            db_wipe=False,
+            db_encrypt=False,
         )
 
-        self._call_handler()
-
-        subprocess.run.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')", "--encrypt"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=900,
-        )
-
-    @patch("utils.subprocess")
-    def test_success_with_all_flags(self, subprocess):
-        """Handler passes both --wipe and --encrypt when both flags are set."""
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_success_passes_waldb_request_and_updates_status(self, add_disk_match_cmd):
+        """Successful reconciliation sends normalized flags to microceph."""
         self._setup_ready_charm()
+        add_disk_match_cmd.return_value = (
+            "WAL match expression resolved to no devices; proceeding without WAL"
+        )
+
+        with patch.object(
+            self.harness.charm.status, "set", wraps=self.harness.charm.status.set
+        ) as set_status:
+            self.harness.update_config(
+                {
+                    "osd-devices": " eq(@type,'nvme') ",
+                    "wal-devices": " eq(@type,'ssd') ",
+                    "db-devices": " eq(@type,'hdd') ",
+                    "wal-size": " 20GiB ",
+                    "db-size": " 40GiB ",
+                    "device-add-flags": "wipe:osd,encrypt:wal,wipe:db",
+                }
+            )
+
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wal_match="eq(@type,'ssd')",
+            wal_size="20GiB",
+            db_match="eq(@type,'hdd')",
+            db_size="40GiB",
+            wipe=True,
+            encrypt=False,
+            wal_wipe=False,
+            wal_encrypt=True,
+            db_wipe=True,
+            db_encrypt=False,
+        )
+        self.assertTrue(self.storage._stored.last_storage_config_signature)
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertTrue(
+            any(
+                isinstance(call.args[0], MaintenanceStatus)
+                and call.args[0].message == "Processing storage config"
+                for call in set_status.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(call.args[0], ActiveStatus) and call.args[0].message == "charm is ready"
+                for call in set_status.call_args_list
+            )
+        )
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_no_devices_matched_stays_active(self, add_disk_match_cmd):
+        """No matching OSD devices is treated as a no-op, not a failure."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.side_effect = CalledProcessError(
+            returncode=1,
+            cmd=["microceph"],
+            stderr="Error: no devices matched the expression",
+        )
+
+        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
+
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertTrue(self.storage._stored.last_storage_config_signature)
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_missing_wal_size_blocks_without_snap_call(self, add_disk_match_cmd):
+        """wal-devices requires wal-size."""
+        self._setup_ready_charm()
+
         self.harness.update_config(
-            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "wipe:osd,encrypt:osd"}
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "",
+            }
         )
 
-        self._call_handler()
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIn("wal-size", self.harness.charm.status.status.message)
 
-        subprocess.run.assert_called_with(
-            [
-                "microceph",
-                "disk",
-                "add",
-                "--osd-match",
-                "eq(@type,'nvme')",
-                "--wipe",
-                "--encrypt",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=900,
-        )
-
-    @patch("utils.subprocess")
-    def test_strips_whitespace_from_dsl(self, subprocess):
-        """Handler strips leading/trailing whitespace from the DSL expression."""
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_missing_db_size_blocks_without_snap_call(self, add_disk_match_cmd):
+        """db-devices requires db-size."""
         self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "  eq(@type,'nvme')  "})
 
-        self._call_handler()
-
-        subprocess.run.assert_called_with(
-            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=900,
-        )
-
-    # --- No devices matched (not an error) ---
-
-    @patch("utils.subprocess")
-    def test_no_devices_matched_stays_active(self, subprocess):
-        """Handler does not defer or crash when snap reports no devices matched."""
-        self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-
-        subprocess.CalledProcessError = CalledProcessError
-        subprocess.run.side_effect = CalledProcessError(
-            returncode=1, cmd=["microceph"], stderr="Error: no devices matched the expression"
-        )
-
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    # --- CalledProcessError (real error) ---
-
-    @patch("utils.subprocess")
-    def test_snap_error_does_not_crash(self, subprocess):
-        """Handler handles snap failure without unhandled exception."""
-        self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-
-        subprocess.CalledProcessError = CalledProcessError
-        subprocess.run.side_effect = CalledProcessError(
-            returncode=1, cmd=["microceph"], stderr="Error: some snap failure"
-        )
-
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    @patch("utils.subprocess")
-    def test_snap_error_with_empty_stderr(self, subprocess):
-        """Handler handles CalledProcessError with empty stderr without crash."""
-        self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-
-        subprocess.CalledProcessError = CalledProcessError
-        subprocess.run.side_effect = CalledProcessError(returncode=1, cmd=["microceph"], stderr="")
-
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    @patch("utils.subprocess")
-    def test_snap_timeout_does_not_crash(self, subprocess):
-        """Handler handles snap timeout without unhandled exception."""
-        self._setup_ready_charm()
-        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-
-        subprocess.CalledProcessError = CalledProcessError
-        subprocess.TimeoutExpired = TimeoutExpired
-        subprocess.run.side_effect = TimeoutExpired(cmd=["microceph"], timeout=180)
-
-        event = self._call_handler()
-        event.defer.assert_not_called()
-
-    # --- Invalid device-add-flags ---
-
-    @patch("utils.subprocess")
-    def test_invalid_flags_does_not_call_snap(self, subprocess):
-        """Handler does not call snap when device-add-flags are invalid."""
-        self._setup_ready_charm()
         self.harness.update_config(
-            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "invalid:flag"}
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "db-devices": "eq(@type,'hdd')",
+                "db-size": "",
+            }
         )
 
-        self._call_handler()
-        subprocess.run.assert_not_called()
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIn("db-size", self.harness.charm.status.status.message)
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_invalid_flags_block_without_snap_call(self, add_disk_match_cmd):
+        """Invalid device-add-flags block before any snap call."""
+        self._setup_ready_charm()
+
+        self.harness.update_config(
+            {"osd-devices": "eq(@type,'nvme')", "device-add-flags": "encrypt:wla"}
+        )
+
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIn("Invalid device-add-flags", self.harness.charm.status.status.message)
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_snap_validation_failure_blocks(self, add_disk_match_cmd):
+        """Snap validation errors surface as blocked status."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.side_effect = CalledProcessError(
+            returncode=1,
+            cmd=["microceph"],
+            stderr="WAL carrier overlaps selected OSD device",
+        )
+
+        self.harness.update_config(
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+            }
+        )
+
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIn("WAL carrier overlaps", self.harness.charm.status.status.message)

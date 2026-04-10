@@ -65,7 +65,7 @@ options:
     type: string
     default: ""
     description: |
-      DSL expression to match block devices for OSD enrollment.
+      DSL expression to match block devices for config-driven OSD enrollment.
       The DSL uses functional syntax with predicates and variables.
 
       Supported predicates: and(), or(), not(), eq(), ne(), gt(), ge(), lt(), le(), in(), re()
@@ -79,18 +79,53 @@ options:
       When set, the charm evaluates this expression against available
       block devices on each unit and enrolls matching devices as OSDs.
       This is additive to action-based and Juju storage-based OSDs.
+  wal-devices:
+    type: string
+    default: ""
+    description: |
+      DSL expression to match block devices used as WAL carrier devices for
+      config-driven enrollment triggered by osd-devices.
+
+      This option is ignored unless osd-devices is also set.
+  db-devices:
+    type: string
+    default: ""
+    description: |
+      DSL expression to match block devices used as RocksDB carrier devices for
+      config-driven enrollment triggered by osd-devices.
+
+      This option is ignored unless osd-devices is also set.
+  wal-size:
+    type: string
+    default: ""
+    description: |
+      Requested WAL partition size for devices selected by wal-devices.
+
+      This option is ignored unless osd-devices is also set.
+  db-size:
+    type: string
+    default: ""
+    description: |
+      Requested RocksDB partition size for devices selected by db-devices.
+
+      This option is ignored unless osd-devices is also set.
   device-add-flags:
     type: string
     default: ""
     description: |
-      Comma-separated list of flags controlling device addition with the
-      osd-devices config option.
+      Comma-separated list of flags controlling config-driven device addition
+      with the osd-devices flow.
 
       Supported flags:
-        wipe:osd    - Wipe non-pristine OSD devices before enrollment
-        encrypt:osd - Encrypt OSD devices
+        wipe:osd     - Wipe non-pristine OSD devices before enrollment
+        encrypt:osd  - Encrypt OSD devices
+        wipe:wal     - Wipe WAL carrier devices before use
+        encrypt:wal  - Encrypt WAL partitions/devices
+        wipe:db      - Wipe DB carrier devices before use
+        encrypt:db   - Encrypt DB partitions/devices
 
-      Example: wipe:osd,encrypt:osd
+      Example: wipe:osd,encrypt:osd,wipe:wal,encrypt:db
 
-      Note: these flags are not in effect when adding disks via the add-disk
-      action. Use action parameters for this purpose.
+      Note: WAL/DB config and these flags only apply to config-driven
+      provisioning initiated by osd-devices. They are not in effect when using
+      the add-osd action; use action parameters for that path.
