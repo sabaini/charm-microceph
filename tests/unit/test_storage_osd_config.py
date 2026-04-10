@@ -286,6 +286,53 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self.assertIn("wal-size", self.harness.charm.status.status.message)
 
     @patch("storage.microceph.add_disk_match_cmd")
+    def test_reverting_to_cached_request_clears_storage_block(self, add_disk_match_cmd):
+        """Returning to the last good request clears stale blocked status."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+
+        self.harness.update_config(
+            {
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "",
+            }
+        )
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+
+        self.harness.update_config({"wal-devices": "", "wal-size": ""})
+
+        self.assertEqual(add_disk_match_cmd.call_count, 1)
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_clearing_osd_devices_clears_storage_block(self, add_disk_match_cmd):
+        """Clearing config-driven storage activation removes stale storage blocks."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
+        self.assertTrue(self.storage._stored.last_storage_config_signature)
+
+        self.harness.update_config(
+            {
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "",
+            }
+        )
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+
+        self.harness.update_config({"osd-devices": "", "wal-devices": "", "wal-size": ""})
+
+        self.assertEqual(self.storage._stored.last_storage_config_signature, "")
+        self.assertEqual(add_disk_match_cmd.call_count, 1)
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+
+    @patch("storage.microceph.add_disk_match_cmd")
     def test_missing_db_size_blocks_without_snap_call(self, add_disk_match_cmd):
         """db-devices requires db-size."""
         self._setup_ready_charm()

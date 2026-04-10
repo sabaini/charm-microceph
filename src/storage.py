@@ -216,6 +216,7 @@ class StorageHandler(Object):
                     "osd-devices config not set, skipping config-based storage enrollment"
                 )
                 self._reset_osd_config_cache()
+                self._set_storage_config_idle_status()
                 return
 
             self._validate_storage_config(storage_request)
@@ -230,6 +231,7 @@ class StorageHandler(Object):
                     "Skipping storage config processing: unchanged signature=%s",
                     self._storage_config_signature(storage_request),
                 )
+                self._set_storage_config_idle_status()
                 return
 
             self._apply_osd_config(storage_request)
@@ -298,6 +300,13 @@ class StorageHandler(Object):
         return self._stored.last_storage_config_signature == self._storage_config_signature(
             storage_request
         )
+
+    def _set_storage_config_idle_status(self):
+        """Restore ready status for storage-config no-op/recovery paths."""
+        if not self.charm.ready_for_service():
+            return
+
+        self.charm.status.set(ActiveStatus("charm is ready"))
 
     def _parse_osd_device_flags(self, device_add_flags: str) -> DeviceAddFlags:
         """Parse device-add-flags for config-driven storage handling."""
