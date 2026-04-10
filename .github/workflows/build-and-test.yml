@@ -1432,3 +1432,141 @@ jobs:
       - name: Setup tmate session
         if: ${{ failure() && runner.debug }}
         uses: canonical/action-tmate@main
+
+  charm-upgrade-test:
+    needs:
+      - lint
+      - unit-test
+      - build
+    name: charm upgrade test
+    runs-on: self-hosted-linux-amd64-noble-xlarge
+    steps:
+
+      - name: Download charm
+        uses: actions/download-artifact@v4
+        with:
+          name: charms
+          path: ~/artifacts/
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup LXD
+        uses: canonical/setup-lxd@v0.1.1
+        with:
+          # pin lxd to LTS release.
+          channel: 5.21/stable
+
+      - name: Install dependencies
+        run: ./tests/scripts/ci_helpers.sh install_deps
+
+      - name: Install MicroCeph squid charm from store
+        run: |
+          date
+          juju deploy -n 3 microceph --channel squid/stable
+          ./tests/scripts/ci_helpers.sh wait_for_microceph_bootstrap
+          date
+
+      - name: Show Juju status
+        run: |
+          set -eux
+          juju status
+
+      - name: Add disks for health
+        run: |
+          set -eux
+          for i in 0 1 2 ; do juju run microceph/$i add-osd loop-spec=4G,1 ; done
+          sleep 60
+          juju ssh microceph/0 -- sudo ceph -s
+
+      - name: Test successful upgrade to squid/candidate
+        run: |
+          set -eux
+          date
+          before_status=$(juju status --format json)
+          before_rev=$(jq -er '.applications.microceph["charm-rev"]' <<< "$before_status")
+          before_origin=$(jq -cr '.applications.microceph["charm-origin"] // empty' <<< "$before_status")
+          before_channel=$(jq -r '
+            .applications.microceph["charm-origin"] as $origin
+            | if ($origin | type) == "object" and ($origin.risk // empty) != "" then
+                "\(($origin.track // "latest"))/\($origin.risk)"
+              else
+                empty
+              end
+          ' <<< "$before_status")
+          juju refresh microceph --channel squid/candidate
+          sleep 60
+          # Initial wait
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m || true
+          # Get status
+          juju ssh microceph/0 -- sudo ceph -s
+          juju ssh microceph/0 -- sudo ceph health | grep HEALTH_OK
+          juju status
+          # Fail if goal status not reached
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
+          after_status=$(juju status --format json)
+          after_rev=$(jq -er '.applications.microceph["charm-rev"]' <<< "$after_status")
+          after_origin=$(jq -cr '.applications.microceph["charm-origin"] // empty' <<< "$after_status")
+          after_channel=$(jq -r '
+            .applications.microceph["charm-origin"] as $origin
+            | if ($origin | type) == "object" and ($origin.risk // empty) != "" then
+                "\(($origin.track // "latest"))/\($origin.risk)"
+              else
+                empty
+              end
+          ' <<< "$after_status")
+          echo "microceph charm before refresh: channel=${before_channel:-unknown}, origin=${before_origin:-unknown}, rev=${before_rev}"
+          echo "microceph charm after refresh: channel=${after_channel:-unknown}, origin=${after_origin:-unknown}, rev=${after_rev}"
+          if [[ -n "$after_channel" ]]; then
+            if [[ "$after_channel" != "squid/candidate" ]]; then
+              echo "Expected charm to track squid/candidate after refresh, but got ${after_channel}"
+              exit 1
+            fi
+          elif [[ -n "$before_origin" && -n "$after_origin" && "$before_origin" == "$after_origin" ]]; then
+            echo "Charm origin did not change after refresh; relying on active+idle and Ceph health checks"
+          fi
+          date
+
+      - name: Test successful upgrade to locally built charm
+        run: |
+          set -eux
+          date
+          before_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          before_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
+          juju refresh microceph --path ~/artifacts/microceph.charm
+          sleep 60
+          # Initial wait
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=30m || true
+          # Get status
+          juju ssh microceph/0 -- sudo ceph -s
+          juju status
+          # Fail if goal status not reached
+          juju wait-for application microceph --query='forEach(units, unit => unit.workload-status=="active" && unit.agent-status=="idle")' --timeout=2m
+          after_rev=$(juju status --format json | jq -er '.applications.microceph["charm-rev"]')
+          after_origin=$(juju status --format json | jq -er '.applications.microceph["charm-origin"]')
+          echo "microceph charm before refresh: origin=${before_origin}, rev=${before_rev}"
+          echo "microceph charm after refresh: origin=${after_origin}, rev=${after_rev}"
+          if [[ "$before_rev" == "$after_rev" && "$before_origin" == "$after_origin" ]]; then
+            echo "Expected local charm refresh to change deployed charm metadata, but origin/revision were unchanged"
+            exit 1
+          fi
+          date
+
+
+      - name: Collect logs
+        if: failure()
+        run: ./tests/scripts/ci_helpers.sh collect_microceph_logs
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microceph_juju_upgrade_test_logs
+          path: logs
+          retention-days: 30
+
+      - name: Setup tmate session
+        if: ${{ failure() && runner.debug }}
+        uses: canonical/action-tmate@main
