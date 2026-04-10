@@ -2,6 +2,8 @@ name: Upgrade a s/stable charm to s/candidate
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '30 23 */2 * *'
 
 jobs:
   s2s-candidate-upgrade:
