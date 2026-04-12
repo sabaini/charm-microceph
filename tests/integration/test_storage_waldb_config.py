@@ -112,8 +112,14 @@ def _create_attached_disk(
     model_name = juju_vm.status().model.name
     vol_name = f"{prefix}-{model_name}"
 
+    existing_disks = set(lxd.list_disks(juju_vm, unit_name))
     lxd.create_and_attach_volume(pool, vol_name, inst_id, size=size)
-    disk_path = lxd.wait_for_disk(juju_vm, unit_name, size_pattern=size_pattern)
+    disk_path = lxd.wait_for_disk(
+        juju_vm,
+        unit_name,
+        size_pattern=size_pattern,
+        existing_disks=existing_disks,
+    )
     logger.info("Attached %s volume %s at %s", prefix, vol_name, disk_path)
     return pool, vol_name, inst_id, disk_path
 

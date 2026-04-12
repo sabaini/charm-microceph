@@ -402,8 +402,29 @@ class TestMicroCeph(unittest.TestCase):
 
     @patch("microceph._setup_dm_crypt")
     @patch("utils.run_cmd")
-    def test_add_disk_match_cmd_calls_dm_crypt_for_any_encryption(self, run_cmd, setup_dm_crypt):
-        """Any encryption flag triggers dm-crypt setup exactly once."""
+    def test_add_disk_match_cmd_ignores_orphaned_auxiliary_args(self, run_cmd, setup_dm_crypt):
+        """WAL/DB size and flags are ignored when their match selectors are unset."""
+        microceph.add_disk_match_cmd(
+            "eq(@type,'nvme')",
+            wal_size="20GiB",
+            wal_wipe=True,
+            wal_encrypt=True,
+            db_size="40GiB",
+            db_wipe=True,
+            db_encrypt=True,
+        )
+
+        run_cmd.assert_called_once_with(
+            ["microceph", "disk", "add", "--osd-match", "eq(@type,'nvme')"], timeout=900
+        )
+        setup_dm_crypt.assert_not_called()
+
+    @patch("microceph._setup_dm_crypt")
+    @patch("utils.run_cmd")
+    def test_add_disk_match_cmd_calls_dm_crypt_for_any_active_encryption(
+        self, run_cmd, setup_dm_crypt
+    ):
+        """Any active encryption flag triggers dm-crypt setup exactly once."""
         for kwargs in (
             {"encrypt": True},
             {"wal_match": "eq(@type,'ssd')", "wal_size": "20GiB", "wal_encrypt": True},

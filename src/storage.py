@@ -250,12 +250,26 @@ class StorageHandler(Object):
             }
 
         flags = self._parse_osd_device_flags(self.charm.model.config.get("device-add-flags", ""))
+        wal_match = self._normalized_config_value("wal-devices")
+        db_match = self._normalized_config_value("db-devices")
+
+        wal_size = self._normalized_config_value("wal-size") if wal_match else None
+        db_size = self._normalized_config_value("db-size") if db_match else None
+
+        if not wal_match:
+            flags.wipe_wal = False
+            flags.encrypt_wal = False
+
+        if not db_match:
+            flags.wipe_db = False
+            flags.encrypt_db = False
+
         return {
             "osd_match": osd_match,
-            "wal_match": self._normalized_config_value("wal-devices"),
-            "db_match": self._normalized_config_value("db-devices"),
-            "wal_size": self._normalized_config_value("wal-size"),
-            "db_size": self._normalized_config_value("db-size"),
+            "wal_match": wal_match,
+            "db_match": db_match,
+            "wal_size": wal_size,
+            "db_size": db_size,
             "flags": asdict(flags),
         }
 

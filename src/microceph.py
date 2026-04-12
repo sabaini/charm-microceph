@@ -415,23 +415,27 @@ def add_disk_match_cmd(
 ) -> str:
     """Execute MicroCeph disk add with DSL-based OSD/WAL/DB matching."""
     cmd = ["microceph", "disk", "add", "--osd-match", osd_match]
+    wal_enabled = bool(wal_match)
+    db_enabled = bool(db_match)
 
-    _append_optional_match_args(
-        cmd,
-        ("--wal-match", wal_match),
-        ("--wal-size", wal_size),
-    )
-    _append_enabled_flags(cmd, (wal_wipe, "--wal-wipe"), (wal_encrypt, "--wal-encrypt"))
+    if wal_enabled:
+        _append_optional_match_args(
+            cmd,
+            ("--wal-match", wal_match),
+            ("--wal-size", wal_size),
+        )
+        _append_enabled_flags(cmd, (wal_wipe, "--wal-wipe"), (wal_encrypt, "--wal-encrypt"))
 
-    _append_optional_match_args(
-        cmd,
-        ("--db-match", db_match),
-        ("--db-size", db_size),
-    )
-    _append_enabled_flags(cmd, (db_wipe, "--db-wipe"), (db_encrypt, "--db-encrypt"))
+    if db_enabled:
+        _append_optional_match_args(
+            cmd,
+            ("--db-match", db_match),
+            ("--db-size", db_size),
+        )
+        _append_enabled_flags(cmd, (db_wipe, "--db-wipe"), (db_encrypt, "--db-encrypt"))
     _append_enabled_flags(cmd, (wipe, "--wipe"), (encrypt, "--encrypt"), (dry_run, "--dry-run"))
 
-    if any((encrypt, wal_encrypt, db_encrypt)):
+    if encrypt or (wal_enabled and wal_encrypt) or (db_enabled and db_encrypt):
         _setup_dm_crypt()
 
     return utils.run_cmd(cmd, timeout=900)

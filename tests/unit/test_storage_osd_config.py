@@ -126,6 +126,38 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             },
         )
 
+    def test_normalize_storage_config_discards_inactive_auxiliary_settings(self):
+        """WAL/DB sizes and flags are ignored when their device selectors are unset."""
+        self.harness.update_config(
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "",
+                "db-devices": "   ",
+                "wal-size": "20GiB",
+                "db-size": "40GiB",
+                "device-add-flags": "wipe:osd,wipe:wal,encrypt:wal,wipe:db,encrypt:db",
+            }
+        )
+
+        self.assertEqual(
+            self.storage._normalize_storage_config(),
+            {
+                "osd_match": "eq(@type,'nvme')",
+                "wal_match": None,
+                "db_match": None,
+                "wal_size": None,
+                "db_size": None,
+                "flags": {
+                    "wipe_osd": True,
+                    "encrypt_osd": False,
+                    "wipe_wal": False,
+                    "encrypt_wal": False,
+                    "wipe_db": False,
+                    "encrypt_db": False,
+                },
+            },
+        )
+
     def test_empty_osd_devices_resets_signature_cache(self):
         """Clearing osd-devices clears the cached storage signature."""
         self.storage._stored.last_storage_config_signature = "cached-signature"
@@ -194,6 +226,38 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             db_match=None,
             db_size=None,
             wipe=False,
+            encrypt=False,
+            wal_wipe=False,
+            wal_encrypt=False,
+            db_wipe=False,
+            db_encrypt=False,
+        )
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_clearing_auxiliary_match_discards_stale_auxiliary_settings(self, add_disk_match_cmd):
+        """Removing WAL/DB selectors also drops stale sizes and flags."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config(
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+                "device-add-flags": "wipe:osd,wipe:wal,encrypt:wal",
+            }
+        )
+        add_disk_match_cmd.reset_mock()
+
+        self.harness.update_config({"wal-devices": "", "wal-size": "20GiB"})
+
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wal_match=None,
+            wal_size=None,
+            db_match=None,
+            db_size=None,
+            wipe=True,
             encrypt=False,
             wal_wipe=False,
             wal_encrypt=False,
