@@ -62,6 +62,14 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self.storage._on_config_changed_osd_devices(event)
         return event
 
+    def _storage_config_status(self):
+        """Return the storage-config status slot."""
+        return self.storage.storage_config_status.status
+
+    def _workload_status(self):
+        """Return the shared workload status slot."""
+        return self.harness.charm.status.status
+
     def test_normalize_storage_config_trims_and_includes_waldb(self):
         """Normalization trims whitespace and includes WAL/DB settings."""
         self.harness.update_config(
@@ -228,7 +236,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self._call_handler()
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_waldb_change_without_osd_delta_skips_snap_call(self, add_disk_match_cmd):
@@ -248,8 +257,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self.harness.update_config({"wal-size": "30GiB"})
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
-        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_clearing_auxiliary_match_without_osd_delta_skips_snap_call(self, add_disk_match_cmd):
@@ -270,8 +279,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self.harness.update_config({"wal-devices": "", "wal-size": "20GiB"})
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
-        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_osd_change_applies_latest_waldb_settings(self, add_disk_match_cmd):
@@ -316,7 +325,9 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
         with patch.object(
-            self.harness.charm.status, "set", wraps=self.harness.charm.status.set
+            self.storage.storage_config_status,
+            "set",
+            wraps=self.storage.storage_config_status.set,
         ) as set_status:
             self.harness.update_config(
                 {
@@ -343,8 +354,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             db_encrypt=False,
         )
         self.assertTrue(self.storage._stored.last_storage_config_signature)
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
-        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
         self.assertTrue(
             any(
                 isinstance(call.args[0], MaintenanceStatus)
@@ -354,7 +365,7 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
         self.assertTrue(
             any(
-                isinstance(call.args[0], ActiveStatus) and call.args[0].message == "charm is ready"
+                isinstance(call.args[0], ActiveStatus) and call.args[0].message == ""
                 for call in set_status.call_args_list
             )
         )
@@ -371,24 +382,26 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
 
         self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
 
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
         self.assertTrue(self.storage._stored.last_storage_config_signature)
 
     def test_unrelated_blocked_status_survives_empty_osd_idle_path(self):
-        """Storage idle handling must not clear non-storage config blocks."""
+        """Storage-config idle handling must not clear workload status."""
         self._setup_ready_charm()
 
         self.harness.update_config({"enable-rgw": "invalid"})
 
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIsInstance(self._workload_status(), BlockedStatus)
         self.assertEqual(
-            self.harness.charm.status.status.message,
+            self._workload_status().message,
             "Improper value for config enable-rgw",
         )
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_unrelated_blocked_status_survives_cached_osd_idle_path(self, add_disk_match_cmd):
-        """Cached storage no-op must not clear non-storage config blocks."""
+        """Cached storage no-op must not clear workload status."""
         self._setup_ready_charm()
         add_disk_match_cmd.return_value = "configured"
 
@@ -410,15 +423,16 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             db_wipe=False,
             db_encrypt=False,
         )
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIsInstance(self._workload_status(), BlockedStatus)
         self.assertEqual(
-            self.harness.charm.status.status.message,
+            self._workload_status().message,
             "Improper value for config enable-rgw",
         )
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_unrelated_blocked_status_survives_storage_apply(self, add_disk_match_cmd):
-        """Storage reconciliation should still run without clearing unrelated blocks."""
+        """Storage reconciliation should use its own status slot."""
         self._setup_ready_charm()
         add_disk_match_cmd.return_value = "configured"
 
@@ -443,11 +457,39 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             db_encrypt=False,
         )
         self.assertTrue(self.storage._stored.last_storage_config_signature)
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIsInstance(self._workload_status(), BlockedStatus)
         self.assertEqual(
-            self.harness.charm.status.status.message,
+            self._workload_status().message,
             "Improper value for config enable-rgw",
         )
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_storage_failure_uses_storage_config_status_slot(self, add_disk_match_cmd):
+        """Storage failures should block storage-config without clobbering workload."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.side_effect = CalledProcessError(
+            returncode=1,
+            cmd=["microceph"],
+            stderr="WAL carrier overlaps selected OSD device",
+        )
+
+        self.harness.update_config(
+            {
+                "enable-rgw": "invalid",
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+            }
+        )
+
+        self.assertIsInstance(self._workload_status(), BlockedStatus)
+        self.assertEqual(
+            self._workload_status().message,
+            "Improper value for config enable-rgw",
+        )
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
+        self.assertIn("WAL carrier overlaps", self._storage_config_status().message)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_missing_wal_size_blocks_without_snap_call(self, add_disk_match_cmd):
@@ -463,8 +505,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
-        self.assertIn("wal-size", self.harness.charm.status.status.message)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
+        self.assertIn("wal-size", self._storage_config_status().message)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_reverting_to_cached_request_clears_storage_block(self, add_disk_match_cmd):
@@ -473,7 +515,7 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         add_disk_match_cmd.return_value = "configured"
 
         self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
 
         self.harness.update_config(
             {
@@ -481,13 +523,13 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
                 "wal-size": "",
             }
         )
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
 
         self.harness.update_config({"wal-devices": "", "wal-size": ""})
 
         self.assertEqual(add_disk_match_cmd.call_count, 1)
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
-        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_clearing_osd_devices_clears_storage_block(self, add_disk_match_cmd):
@@ -504,14 +546,14 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
                 "wal-size": "",
             }
         )
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
 
         self.harness.update_config({"osd-devices": "", "wal-devices": "", "wal-size": ""})
 
         self.assertEqual(self.storage._stored.last_storage_config_signature, "")
         self.assertEqual(add_disk_match_cmd.call_count, 1)
-        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
-        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+        self.assertIsInstance(self._storage_config_status(), ActiveStatus)
+        self.assertEqual(self._storage_config_status().message, "")
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_missing_db_size_blocks_without_snap_call(self, add_disk_match_cmd):
@@ -527,8 +569,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
-        self.assertIn("db-size", self.harness.charm.status.status.message)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
+        self.assertIn("db-size", self._storage_config_status().message)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_invalid_flags_block_without_snap_call(self, add_disk_match_cmd):
@@ -540,8 +582,8 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
         add_disk_match_cmd.assert_not_called()
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
-        self.assertIn("Invalid device-add-flags", self.harness.charm.status.status.message)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
+        self.assertIn("Invalid device-add-flags", self._storage_config_status().message)
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_snap_validation_failure_blocks(self, add_disk_match_cmd):
@@ -561,5 +603,5 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             }
         )
 
-        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
-        self.assertIn("WAL carrier overlaps", self.harness.charm.status.status.message)
+        self.assertIsInstance(self._storage_config_status(), BlockedStatus)
+        self.assertIn("WAL carrier overlaps", self._storage_config_status().message)

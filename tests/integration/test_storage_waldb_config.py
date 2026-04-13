@@ -98,6 +98,89 @@ def _clear_storage_config_and_wait(juju_vm: jubilant.Juju, timeout: int = 300) -
     _wait_for_active(juju_vm, timeout=timeout)
 
 
+def _disk_list_json(juju_vm: jubilant.Juju) -> dict:
+    """Return ``microceph disk list --json`` from the lead unit."""
+    unit_name = helpers.first_unit_name(juju_vm.status(), APP_NAME)
+    disk_list = juju_vm.ssh(unit_name, "sudo", "microceph", "disk", "list", "--json")
+    return json.loads(disk_list)
+
+
+def _configured_disks(juju_vm: jubilant.Juju) -> list[dict]:
+    """Return configured disks from ``microceph disk list --json``."""
+    return _disk_list_json(juju_vm).get("ConfiguredDisks", [])
+
+
+def _configured_osd_ids(juju_vm: jubilant.Juju) -> set[int]:
+    """Return configured OSD ids currently visible to MicroCeph."""
+    return {int(disk["osd"]) for disk in _configured_disks(juju_vm)}
+
+
+def _new_configured_osd(juju_vm: jubilant.Juju, before: set[int]) -> dict:
+    """Return the single newly configured OSD after a test action."""
+    new_disks = [disk for disk in _configured_disks(juju_vm) if int(disk["osd"]) not in before]
+    assert len(new_disks) == 1, f"Expected exactly one new configured OSD, got: {new_disks}"
+    return new_disks[0]
+
+
+def _resolve_guest_path(juju_vm: jubilant.Juju, path: str) -> str:
+    """Resolve a guest path to its canonical device node path."""
+    unit_name = helpers.first_unit_name(juju_vm.status(), APP_NAME)
+    return juju_vm.ssh(unit_name, "sudo", "readlink", "-f", path).strip()
+
+
+def _resolve_osd_link(juju_vm: jubilant.Juju, osd_num: int, link_name: str) -> str:
+    """Resolve an OSD data-dir symlink such as ``block.db`` or ``block.wal``."""
+    unit_name = helpers.first_unit_name(juju_vm.status(), APP_NAME)
+    script = (
+        f'path=/var/snap/microceph/common/data/osd/ceph-{osd_num}/{link_name}; '
+        'if [ -e "$path" ]; then readlink -f "$path"; fi'
+    )
+    return juju_vm.ssh(unit_name, "sudo", "bash", "-ec", script).strip()
+
+
+def _assert_osd_device_layout(
+    juju_vm: jubilant.Juju,
+    *,
+    osd_num: int,
+    data_device: str,
+    wal_device: str | None = None,
+    db_device: str | None = None,
+) -> None:
+    """Assert that the OSD data dir links point at the expected devices."""
+    block_path = _resolve_osd_link(juju_vm, osd_num, "block")
+    assert block_path.startswith(
+        data_device
+    ), f"OSD {osd_num} data path {block_path!r} does not resolve to {data_device!r}"
+
+    if wal_device is not None:
+        wal_path = _resolve_osd_link(juju_vm, osd_num, "block.wal")
+        assert wal_path, f"OSD {osd_num} is missing block.wal"
+        assert wal_path.startswith(
+            wal_device
+        ), f"OSD {osd_num} WAL path {wal_path!r} does not resolve to {wal_device!r}"
+
+    if db_device is not None:
+        db_path = _resolve_osd_link(juju_vm, osd_num, "block.db")
+        assert db_path, f"OSD {osd_num} is missing block.db"
+        assert db_path.startswith(
+            db_device
+        ), f"OSD {osd_num} DB path {db_path!r} does not resolve to {db_device!r}"
+
+
+def _assert_disk_list_excludes_devices(juju_vm: jubilant.Juju, *devices: str) -> None:
+    """Assert that disk-list does not expose WAL/DB carrier devices as disks."""
+    disk_list = _disk_list_json(juju_vm)
+    offenders: list[tuple[str, str, str]] = []
+
+    for section in ("ConfiguredDisks", "AvailableDisks"):
+        for disk in disk_list.get(section, []):
+            resolved_path = _resolve_guest_path(juju_vm, disk["path"])
+            if any(resolved_path.startswith(device) for device in devices):
+                offenders.append((section, disk["path"], resolved_path))
+
+    assert not offenders, f"Disk list still exposes WAL/DB carrier devices: {offenders}"
+
+
 def _create_attached_disk(
     juju_vm: jubilant.Juju,
     *,
@@ -254,6 +337,8 @@ def test_storage_config_happy_path_provisions_osd_wal_db(
     juju_vm: jubilant.Juju, deployed_microceph, happy_path_devices: dict[str, str]
 ):
     """Provision an OSD with distinct WAL and DB carrier devices."""
+    before_osds = _configured_osd_ids(juju_vm)
+
     _apply_storage_config_and_wait(
         juju_vm,
         osd_devices=f"eq(@devnode,'{happy_path_devices['osd']}')",
@@ -266,6 +351,19 @@ def test_storage_config_happy_path_provisions_osd_wal_db(
     )
 
     helpers.assert_osd_count(juju_vm, APP_NAME, expected_osds=1, timeout=900)
+    new_osd = _new_configured_osd(juju_vm, before_osds)
+    _assert_osd_device_layout(
+        juju_vm,
+        osd_num=int(new_osd["osd"]),
+        data_device=happy_path_devices["osd"],
+        wal_device=happy_path_devices["wal"],
+        db_device=happy_path_devices["db"],
+    )
+    _assert_disk_list_excludes_devices(
+        juju_vm,
+        happy_path_devices["wal"],
+        happy_path_devices["db"],
+    )
 
 
 @pytest.mark.abort_on_fail
@@ -273,6 +371,8 @@ def test_storage_config_reapply_is_idempotent(
     juju_vm: jubilant.Juju, deployed_microceph, happy_path_devices: dict[str, str]
 ):
     """Re-applying the same config should not duplicate OSDs."""
+    before_osds = _configured_osd_ids(juju_vm)
+
     _apply_storage_config_and_wait(
         juju_vm,
         osd_devices=f"eq(@devnode,'{happy_path_devices['osd']}')",
@@ -285,6 +385,16 @@ def test_storage_config_reapply_is_idempotent(
     )
 
     helpers.assert_osd_count(juju_vm, APP_NAME, expected_osds=1, timeout=900)
+    after_osds = _configured_osd_ids(juju_vm)
+    assert after_osds == before_osds, f"Reapply unexpectedly changed configured OSDs: {after_osds}"
+    only_osd = next(iter(after_osds))
+    _assert_osd_device_layout(
+        juju_vm,
+        osd_num=only_osd,
+        data_device=happy_path_devices["osd"],
+        wal_device=happy_path_devices["wal"],
+        db_device=happy_path_devices["db"],
+    )
 
 
 @pytest.mark.abort_on_fail
@@ -292,6 +402,8 @@ def test_storage_config_warning_only_no_wal_match_stays_active(
     juju_vm: jubilant.Juju, deployed_microceph, warning_path_devices: dict[str, str]
 ):
     """A no-WAL-match warning should stay active and still add the OSD."""
+    before_osds = _configured_osd_ids(juju_vm)
+
     _apply_storage_config_and_wait(
         juju_vm,
         osd_devices=f"eq(@devnode,'{warning_path_devices['osd']}')",
@@ -306,6 +418,14 @@ def test_storage_config_warning_only_no_wal_match_stays_active(
     status = juju_vm.status()
     assert status.apps[APP_NAME].app_status.current == "active"
     helpers.assert_osd_count(juju_vm, APP_NAME, expected_osds=2, timeout=900)
+    new_osd = _new_configured_osd(juju_vm, before_osds)
+    _assert_osd_device_layout(
+        juju_vm,
+        osd_num=int(new_osd["osd"]),
+        data_device=warning_path_devices["osd"],
+        db_device=warning_path_devices["db"],
+    )
+    _assert_disk_list_excludes_devices(juju_vm, warning_path_devices["db"])
 
 
 @pytest.mark.abort_on_fail
@@ -323,6 +443,12 @@ def test_storage_config_overlap_failure_blocks(
 
     with helpers.fast_forward(juju_vm):
         helpers.wait_for_status(juju_vm, APP_NAME, ("blocked", "error"), timeout=300)
+
+    status = juju_vm.status()
+    unit_name = helpers.first_unit_name(status, APP_NAME)
+    unit_status = status.apps[APP_NAME].units[unit_name]
+    assert unit_status.workload_status.current in {"blocked", "error"}
+    assert "overlap" in unit_status.workload_status.message.lower()
 
     _clear_storage_config_and_wait(juju_vm, timeout=300)
     helpers.assert_osd_count(juju_vm, APP_NAME, expected_osds=2, timeout=900)
@@ -360,8 +486,6 @@ def test_storage_config_coexists_with_add_osd_action(
 @pytest.mark.abort_on_fail
 def test_storage_config_disk_list_still_returns_json(juju_vm: jubilant.Juju, deployed_microceph):
     """Sanity-check the deployed unit still reports disks after WAL/DB flows."""
-    unit_name = helpers.first_unit_name(juju_vm.status(), APP_NAME)
-    disk_list = juju_vm.ssh(unit_name, "sudo", "microceph", "disk", "list", "--json")
-    parsed = json.loads(disk_list)
+    parsed = _disk_list_json(juju_vm)
     assert "ConfiguredDisks" in parsed
     assert len(parsed["ConfiguredDisks"]) >= 3

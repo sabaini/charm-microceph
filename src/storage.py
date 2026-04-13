@@ -20,24 +20,19 @@ import json
 import logging
 from dataclasses import asdict
 from subprocess import CalledProcessError, TimeoutExpired, run
+from types import SimpleNamespace
 
+import ops_sunbeam.compound_status as compound_status
 import ops_sunbeam.guard as sunbeam_guard
 from ops.charm import ActionEvent, CharmBase, StorageAttachedEvent, StorageDetachingEvent
 from ops.framework import Object, StoredState
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
+from ops.model import ActiveStatus, MaintenanceStatus
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 import microceph
 from device_flags import DeviceAddFlags, parse_device_add_flags
 
 logger = logging.getLogger(__name__)
-
-STORAGE_CONFIG_STATUS_PREFIXES = (
-    "Invalid storage config:",
-    "Invalid device-add-flags:",
-    "Failed to add OSDs via config:",
-)
-STORAGE_CONFIG_MAINTENANCE_MESSAGES = frozenset({"Processing storage config"})
 
 
 class StorageHandler(Object):
@@ -73,6 +68,12 @@ class StorageHandler(Object):
         )
         self.charm = charm
         self.name = name
+        self.storage_status = compound_status.Status(self.name)
+        self.storage_config_status = compound_status.Status(f"{self.name}-config")
+        self.charm.status_pool.add(self.storage_status)
+        self.charm.status_pool.add(self.storage_config_status)
+        self._storage_guard = SimpleNamespace(status=self.storage_status)
+        self._storage_config_guard = SimpleNamespace(status=self.storage_config_status)
 
         # Attach handlers
         self.framework.observe(
@@ -113,10 +114,10 @@ class StorageHandler(Object):
                 enroll.append(storage)
 
         logger.debug(f"Enroll list {enroll}")
-        with sunbeam_guard.guard(self.charm, self.name):
-            self.charm.status.set(MaintenanceStatus("Enrolling OSDs"))
+        with sunbeam_guard.guard(self._storage_guard, self.name):
+            self.storage_status.set(MaintenanceStatus("Enrolling OSDs"))
             self._enroll_disks_in_batch(enroll)
-            self.charm.status.set(ActiveStatus("charm is ready"))
+            self.storage_status.set(ActiveStatus(""))
 
     def _on_storage_detaching(self, event: StorageDetachingEvent):
         """Unified storage detaching handler."""
@@ -129,7 +130,7 @@ class StorageHandler(Object):
         if osd_num is None:
             return
 
-        with sunbeam_guard.guard(self.charm, self.name):
+        with sunbeam_guard.guard(self._storage_guard, self.name):
             try:
                 self.remove_osd(osd_num)
             except CalledProcessError as e:
@@ -213,7 +214,7 @@ class StorageHandler(Object):
 
     def _on_config_changed_osd_devices(self, event):
         """Process config-driven storage requests for OSD/WAL/DB matching."""
-        with sunbeam_guard.guard(self.charm, self.name):
+        with sunbeam_guard.guard(self._storage_config_guard, f"{self.name}-config"):
             storage_request = self._normalize_storage_config()
             logger.debug(
                 "Normalized storage config request: %s",
@@ -490,45 +491,15 @@ class StorageHandler(Object):
         logger.debug("Storage config cache miss")
         return False
 
-    def _is_storage_config_status(self, status) -> bool:
-        """Whether the current workload status is owned by config-driven storage."""
-        if isinstance(status, MaintenanceStatus):
-            return status.message in STORAGE_CONFIG_MAINTENANCE_MESSAGES
-
-        if isinstance(status, (BlockedStatus, WaitingStatus)):
-            return status.message.startswith(STORAGE_CONFIG_STATUS_PREFIXES)
-
-        return False
-
-    def _unrelated_blocked_workload_status(self):
-        """Return a pre-existing non-storage blocked workload status, if any."""
-        status = self.charm.status.status
-        if isinstance(status, BlockedStatus) and not self._is_storage_config_status(status):
-            return status
-        return None
-
     def _set_storage_config_idle_status(self):
-        """Restore ready status for storage-config no-op/recovery paths."""
-        if not self.charm.ready_for_service():
-            logger.debug("Skipping idle status restore because charm is not ready for service")
-            return
-
-        status = self.charm.status.status
-        if isinstance(status, ActiveStatus):
-            logger.debug("Skipping idle status restore because workload status is already active")
-            return
-
-        if isinstance(status, BlockedStatus) and not self._is_storage_config_status(status):
-            logger.debug(
-                "Preserving existing blocked workload status during storage-config idle "
-                "path status=%s message=%s",
-                status.name,
-                getattr(status, "message", ""),
-            )
+        """Clear config-driven storage status for no-op/recovery paths."""
+        status = self.storage_config_status.status
+        if isinstance(status, ActiveStatus) and not status.message:
+            logger.debug("Storage-config status already active")
             return
 
         logger.debug("Restoring active status for storage-config idle path")
-        self.charm.status.set(ActiveStatus("charm is ready"))
+        self.storage_config_status.set(ActiveStatus(""))
 
     def _parse_osd_device_flags(self, device_add_flags: str) -> DeviceAddFlags:
         """Parse device-add-flags for config-driven storage handling."""
@@ -584,16 +555,8 @@ class StorageHandler(Object):
             storage_request["flags"]["wipe_osd"],
             storage_request["flags"]["encrypt_osd"],
         )
-        preserved_status = self._unrelated_blocked_workload_status()
         try:
-            if preserved_status is None:
-                self.charm.status.set(MaintenanceStatus("Processing storage config"))
-            else:
-                logger.debug(
-                    "Processing storage config while preserving unrelated blocked status "
-                    "message=%s",
-                    preserved_status.message,
-                )
+            self.storage_config_status.set(MaintenanceStatus("Processing storage config"))
             logger.debug(
                 "Calling microceph.add_disk_match_cmd for request=%s",
                 json.dumps(storage_request, sort_keys=True),
@@ -613,15 +576,7 @@ class StorageHandler(Object):
             )
             if output and output.strip():
                 logger.info("Storage config command output:\n%s", output.strip())
-            if preserved_status is not None:
-                logger.debug(
-                    "Restoring unrelated blocked status after successful storage config apply "
-                    "message=%s",
-                    preserved_status.message,
-                )
-                self.charm.status.set(preserved_status)
-            else:
-                self.charm.status.set(ActiveStatus("charm is ready"))
+            self.storage_config_status.set(ActiveStatus(""))
             self._set_osd_config_cache(storage_request)
             logger.info(
                 "Successfully processed storage config osd_match=%s wal_enabled=%s "
@@ -637,15 +592,7 @@ class StorageHandler(Object):
                     "No devices matched config-driven OSD request request=%s",
                     json.dumps(storage_request, sort_keys=True),
                 )
-                if preserved_status is not None:
-                    logger.debug(
-                        "Restoring unrelated blocked status after no-op storage config "
-                        "message=%s",
-                        preserved_status.message,
-                    )
-                    self.charm.status.set(preserved_status)
-                else:
-                    self.charm.status.set(ActiveStatus("charm is ready"))
+                self.storage_config_status.set(ActiveStatus(""))
                 self._set_osd_config_cache(storage_request)
                 return
 
