@@ -472,21 +472,6 @@ def add_disk_match_cmd(
     return utils.run_cmd(cmd, timeout=900)
 
 
-def add_osd_match_cmd(
-    osd_match: str,
-    wipe: bool = False,
-    encrypt: bool = False,
-    dry_run: bool = False,
-) -> str:
-    """Compatibility wrapper for DSL-based OSD matching."""
-    return add_disk_match_cmd(
-        osd_match=osd_match,
-        wipe=wipe,
-        encrypt=encrypt,
-        dry_run=dry_run,
-    )
-
-
 def get_snap_info(snap_name):
     """Get snap info from the charm store."""
     url = f"https://api.snapcraft.io/v2/snaps/info/{snap_name}"

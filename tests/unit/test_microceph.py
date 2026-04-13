@@ -436,20 +436,3 @@ class TestMicroCeph(unittest.TestCase):
                 microceph.add_disk_match_cmd("eq(@type,'nvme')", **kwargs)
                 setup_dm_crypt.assert_called_once_with()
                 run_cmd.assert_called_once()
-
-    @patch("microceph.add_disk_match_cmd")
-    def test_add_osd_match_cmd_wrapper(self, add_disk_match_cmd):
-        """add_osd_match_cmd remains a compatibility wrapper."""
-        add_disk_match_cmd.return_value = "matched devices"
-
-        result = microceph.add_osd_match_cmd(
-            "eq(@type,'nvme')", wipe=True, encrypt=True, dry_run=True
-        )
-
-        self.assertEqual(result, "matched devices")
-        add_disk_match_cmd.assert_called_once_with(
-            osd_match="eq(@type,'nvme')",
-            wipe=True,
-            encrypt=True,
-            dry_run=True,
-        )
