@@ -24,13 +24,20 @@ from subprocess import CalledProcessError, TimeoutExpired, run
 import ops_sunbeam.guard as sunbeam_guard
 from ops.charm import ActionEvent, CharmBase, StorageAttachedEvent, StorageDetachingEvent
 from ops.framework import Object, StoredState
-from ops.model import ActiveStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 import microceph
 from device_flags import DeviceAddFlags, parse_device_add_flags
 
 logger = logging.getLogger(__name__)
+
+STORAGE_CONFIG_STATUS_PREFIXES = (
+    "Invalid storage config:",
+    "Invalid device-add-flags:",
+    "Failed to add OSDs via config:",
+)
+STORAGE_CONFIG_MAINTENANCE_MESSAGES = frozenset({"Processing storage config"})
 
 
 class StorageHandler(Object):
@@ -221,6 +228,16 @@ class StorageHandler(Object):
                 )
                 self._reset_osd_config_cache()
                 self._set_storage_config_idle_status()
+                return
+
+            if self._has_unrelated_workload_status():
+                status = self.charm.status.status
+                logger.debug(
+                    "Skipping config-driven storage processing because workload status is "
+                    "owned by another handler status=%s message=%s",
+                    status.name,
+                    getattr(status, "message", ""),
+                )
                 return
 
             self._validate_storage_config(storage_request)
@@ -466,8 +483,7 @@ class StorageHandler(Object):
                 if (
                     cached_request.get("osd_match") == requested["osd_match"]
                     and cached_flags.get("wipe_osd", False) == requested["flags"]["wipe_osd"]
-                    and cached_flags.get("encrypt_osd", False)
-                    == requested["flags"]["encrypt_osd"]
+                    and cached_flags.get("encrypt_osd", False) == requested["flags"]["encrypt_osd"]
                 ):
                     logger.debug("Storage config cache hit via parsed legacy signature")
                     return True
@@ -484,10 +500,39 @@ class StorageHandler(Object):
         logger.debug("Storage config cache miss")
         return False
 
+    def _is_storage_config_status(self, status) -> bool:
+        """Whether the current workload status is owned by config-driven storage."""
+        if isinstance(status, MaintenanceStatus):
+            return status.message in STORAGE_CONFIG_MAINTENANCE_MESSAGES
+
+        if isinstance(status, (BlockedStatus, WaitingStatus)):
+            return status.message.startswith(STORAGE_CONFIG_STATUS_PREFIXES)
+
+        return False
+
+    def _has_unrelated_workload_status(self) -> bool:
+        """Whether another handler already owns a blocking workload status."""
+        status = self.charm.status.status
+        return isinstance(status, BlockedStatus) and not self._is_storage_config_status(status)
+
     def _set_storage_config_idle_status(self):
         """Restore ready status for storage-config no-op/recovery paths."""
         if not self.charm.ready_for_service():
             logger.debug("Skipping idle status restore because charm is not ready for service")
+            return
+
+        status = self.charm.status.status
+        if isinstance(status, ActiveStatus):
+            logger.debug("Skipping idle status restore because workload status is already active")
+            return
+
+        if isinstance(status, BlockedStatus) and not self._is_storage_config_status(status):
+            logger.debug(
+                "Preserving existing blocked workload status during storage-config idle "
+                "path status=%s message=%s",
+                status.name,
+                getattr(status, "message", ""),
+            )
             return
 
         logger.debug("Restoring active status for storage-config idle path")
@@ -525,8 +570,7 @@ class StorageHandler(Object):
                 storage_request["db_match"],
             )
             logger.debug(
-                "Invalid storage config detected: db-devices is set without db-size "
-                "request=%s",
+                "Invalid storage config detected: db-devices is set without db-size request=%s",
                 json.dumps(storage_request, sort_keys=True),
             )
             raise sunbeam_guard.BlockedExceptionError(

@@ -252,9 +252,7 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
 
     @patch("storage.microceph.add_disk_match_cmd")
-    def test_clearing_auxiliary_match_without_osd_delta_skips_snap_call(
-        self, add_disk_match_cmd
-    ):
+    def test_clearing_auxiliary_match_without_osd_delta_skips_snap_call(self, add_disk_match_cmd):
         """Removing WAL/DB selectors alone does not re-emit the snap command."""
         self._setup_ready_charm()
         add_disk_match_cmd.return_value = "configured"
@@ -375,6 +373,48 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
 
         self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
         self.assertTrue(self.storage._stored.last_storage_config_signature)
+
+    def test_unrelated_blocked_status_survives_empty_osd_idle_path(self):
+        """Storage idle handling must not clear non-storage config blocks."""
+        self._setup_ready_charm()
+
+        self.harness.update_config({"enable-rgw": "invalid"})
+
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertEqual(
+            self.harness.charm.status.status.message,
+            "Improper value for config enable-rgw",
+        )
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_unrelated_blocked_status_survives_cached_osd_idle_path(self, add_disk_match_cmd):
+        """Cached storage no-op must not clear non-storage config blocks."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config({"osd-devices": "eq(@type,'nvme')"})
+        self.assertTrue(self.storage._stored.last_storage_config_signature)
+
+        self.harness.update_config({"enable-rgw": "invalid"})
+
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wal_match=None,
+            wal_size=None,
+            db_match=None,
+            db_size=None,
+            wipe=False,
+            encrypt=False,
+            wal_wipe=False,
+            wal_encrypt=False,
+            db_wipe=False,
+            db_encrypt=False,
+        )
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertEqual(
+            self.harness.charm.status.status.message,
+            "Improper value for config enable-rgw",
+        )
 
     @patch("storage.microceph.add_disk_match_cmd")
     def test_missing_wal_size_blocks_without_snap_call(self, add_disk_match_cmd):
