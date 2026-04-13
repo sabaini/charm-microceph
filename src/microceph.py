@@ -414,6 +414,23 @@ def add_disk_match_cmd(
     dry_run: bool = False,
 ) -> str:
     """Execute MicroCeph disk add with DSL-based OSD/WAL/DB matching."""
+    logger.debug(
+        "Preparing microceph disk add command osd_match=%s wal_match=%s wal_size=%s "
+        "db_match=%s db_size=%s wipe=%s encrypt=%s wal_wipe=%s wal_encrypt=%s "
+        "db_wipe=%s db_encrypt=%s dry_run=%s",
+        osd_match,
+        wal_match,
+        wal_size,
+        db_match,
+        db_size,
+        wipe,
+        encrypt,
+        wal_wipe,
+        wal_encrypt,
+        db_wipe,
+        db_encrypt,
+        dry_run,
+    )
     cmd = ["microceph", "disk", "add", "--osd-match", osd_match]
     wal_enabled = bool(wal_match)
     db_enabled = bool(db_match)
@@ -435,7 +452,21 @@ def add_disk_match_cmd(
         _append_enabled_flags(cmd, (db_wipe, "--db-wipe"), (db_encrypt, "--db-encrypt"))
     _append_enabled_flags(cmd, (wipe, "--wipe"), (encrypt, "--encrypt"), (dry_run, "--dry-run"))
 
+    logger.debug(
+        "Built microceph disk add command wal_enabled=%s db_enabled=%s cmd=%s",
+        wal_enabled,
+        db_enabled,
+        cmd,
+    )
+
     if encrypt or (wal_enabled and wal_encrypt) or (db_enabled and db_encrypt):
+        logger.debug(
+            "Encryption requested for disk add command; ensuring dm-crypt is available "
+            "osd_encrypt=%s wal_encrypt=%s db_encrypt=%s",
+            encrypt,
+            wal_encrypt,
+            db_encrypt,
+        )
         _setup_dm_crypt()
 
     return utils.run_cmd(cmd, timeout=900)
