@@ -290,17 +290,38 @@ class StorageHandler(Object):
         raw_flags = (self.charm.model.config.get("device-add-flags", "") or "").split(",")
         return any(flag.strip().lower() in waldb_flags for flag in raw_flags if flag.strip())
 
+    def _cacheable_osd_request(self, storage_request: dict) -> dict:
+        """Return the subset of storage config that can trigger a new snap command."""
+        return {
+            "osd_match": storage_request["osd_match"],
+            "flags": {
+                "wipe_osd": storage_request["flags"]["wipe_osd"],
+                "encrypt_osd": storage_request["flags"]["encrypt_osd"],
+            },
+        }
+
     def _storage_config_signature(self, storage_request: dict) -> str:
-        """Build a stable signature for the normalized storage request."""
-        return json.dumps(storage_request, sort_keys=True, separators=(",", ":"))
+        """Build a stable signature for OSD-affecting storage inputs."""
+        return json.dumps(
+            self._cacheable_osd_request(storage_request),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def _reset_osd_config_cache(self):
         """Reset cache for last successfully applied config-driven storage request."""
+        self._stored.last_osd_devices = ""
+        self._stored.last_wipe_osd = False
+        self._stored.last_encrypt_osd = False
         self._stored.last_storage_config_signature = ""
         logger.debug("Reset config-driven storage cache")
 
     def _set_osd_config_cache(self, storage_request: dict):
         """Persist cache for last successfully applied config-driven storage request."""
+        cacheable_request = self._cacheable_osd_request(storage_request)
+        self._stored.last_osd_devices = cacheable_request["osd_match"]
+        self._stored.last_wipe_osd = cacheable_request["flags"]["wipe_osd"]
+        self._stored.last_encrypt_osd = cacheable_request["flags"]["encrypt_osd"]
         self._stored.last_storage_config_signature = self._storage_config_signature(
             storage_request
         )
@@ -311,8 +332,32 @@ class StorageHandler(Object):
 
     def _is_cached_osd_config(self, storage_request: dict) -> bool:
         """Check whether current config-driven storage request was already applied."""
-        return self._stored.last_storage_config_signature == self._storage_config_signature(
-            storage_request
+        requested = self._cacheable_osd_request(storage_request)
+        last_signature = self._stored.last_storage_config_signature
+
+        if last_signature:
+            if last_signature == self._storage_config_signature(storage_request):
+                return True
+
+            try:
+                cached_request = json.loads(last_signature)
+            except (TypeError, ValueError):
+                cached_request = None
+
+            if isinstance(cached_request, dict):
+                cached_flags = cached_request.get("flags") or {}
+                if (
+                    cached_request.get("osd_match") == requested["osd_match"]
+                    and cached_flags.get("wipe_osd", False) == requested["flags"]["wipe_osd"]
+                    and cached_flags.get("encrypt_osd", False)
+                    == requested["flags"]["encrypt_osd"]
+                ):
+                    return True
+
+        return (
+            self._stored.last_osd_devices == requested["osd_match"]
+            and self._stored.last_wipe_osd == requested["flags"]["wipe_osd"]
+            and self._stored.last_encrypt_osd == requested["flags"]["encrypt_osd"]
         )
 
     def _set_storage_config_idle_status(self):

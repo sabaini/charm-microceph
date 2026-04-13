@@ -159,7 +159,10 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
     def test_empty_osd_devices_resets_signature_cache(self):
-        """Clearing osd-devices clears the cached storage signature."""
+        """Clearing osd-devices clears both legacy and signature cache fields."""
+        self.storage._stored.last_osd_devices = "eq(@type,'nvme')"
+        self.storage._stored.last_wipe_osd = True
+        self.storage._stored.last_encrypt_osd = True
         self.storage._stored.last_storage_config_signature = "cached-signature"
 
         self.harness.update_config(
@@ -171,6 +174,9 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
             }
         )
 
+        self.assertEqual(self.storage._stored.last_osd_devices, "")
+        self.assertFalse(self.storage._stored.last_wipe_osd)
+        self.assertFalse(self.storage._stored.last_encrypt_osd)
         self.assertEqual(self.storage._stored.last_storage_config_signature, "")
 
     def test_not_ready_defers(self):
@@ -203,8 +209,30 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         add_disk_match_cmd.assert_not_called()
 
     @patch("storage.microceph.add_disk_match_cmd")
-    def test_waldb_change_reruns_reconciliation(self, add_disk_match_cmd):
-        """Changing WAL/DB settings invalidates the cache."""
+    def test_legacy_osd_cache_fields_skip_waldb_only_change(self, add_disk_match_cmd):
+        """Legacy OSD cache fields still suppress WAL/DB-only replays after upgrade."""
+        self.harness.update_config(
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@type,'ssd')",
+                "wal-size": "20GiB",
+            }
+        )
+        self.storage._stored.last_osd_devices = "eq(@type,'nvme')"
+        self.storage._stored.last_wipe_osd = False
+        self.storage._stored.last_encrypt_osd = False
+        self.storage._stored.last_storage_config_signature = ""
+        self._setup_ready_charm()
+
+        self.harness.update_config({"wal-size": "30GiB"})
+        self._call_handler()
+
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_waldb_change_without_osd_delta_skips_snap_call(self, add_disk_match_cmd):
+        """Changing WAL/DB settings alone does not re-emit the snap command."""
         self._setup_ready_charm()
         add_disk_match_cmd.return_value = "configured"
 
@@ -219,23 +247,15 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
 
         self.harness.update_config({"wal-size": "30GiB"})
 
-        add_disk_match_cmd.assert_called_once_with(
-            osd_match="eq(@type,'nvme')",
-            wal_match="eq(@type,'ssd')",
-            wal_size="30GiB",
-            db_match=None,
-            db_size=None,
-            wipe=False,
-            encrypt=False,
-            wal_wipe=False,
-            wal_encrypt=False,
-            db_wipe=False,
-            db_encrypt=False,
-        )
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
 
     @patch("storage.microceph.add_disk_match_cmd")
-    def test_clearing_auxiliary_match_discards_stale_auxiliary_settings(self, add_disk_match_cmd):
-        """Removing WAL/DB selectors also drops stale sizes and flags."""
+    def test_clearing_auxiliary_match_without_osd_delta_skips_snap_call(
+        self, add_disk_match_cmd
+    ):
+        """Removing WAL/DB selectors alone does not re-emit the snap command."""
         self._setup_ready_charm()
         add_disk_match_cmd.return_value = "configured"
 
@@ -251,13 +271,37 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
 
         self.harness.update_config({"wal-devices": "", "wal-size": "20GiB"})
 
+        add_disk_match_cmd.assert_not_called()
+        self.assertIsInstance(self.harness.charm.status.status, ActiveStatus)
+        self.assertEqual(self.harness.charm.status.status.message, "charm is ready")
+
+    @patch("storage.microceph.add_disk_match_cmd")
+    def test_osd_change_applies_latest_waldb_settings(self, add_disk_match_cmd):
+        """The next OSD delta reuses the latest WAL/DB settings."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config(
+            {
+                "osd-devices": "eq(@type,'nvme')",
+                "wal-devices": "eq(@vendor,'intel')",
+                "wal-size": "20GiB",
+            }
+        )
+        add_disk_match_cmd.reset_mock()
+
+        self.harness.update_config({"wal-size": "30GiB"})
+        add_disk_match_cmd.assert_not_called()
+
+        self.harness.update_config({"osd-devices": "eq(@type,'ssd')"})
+
         add_disk_match_cmd.assert_called_once_with(
-            osd_match="eq(@type,'nvme')",
-            wal_match=None,
-            wal_size=None,
+            osd_match="eq(@type,'ssd')",
+            wal_match="eq(@vendor,'intel')",
+            wal_size="30GiB",
             db_match=None,
             db_size=None,
-            wipe=True,
+            wipe=False,
             encrypt=False,
             wal_wipe=False,
             wal_encrypt=False,
