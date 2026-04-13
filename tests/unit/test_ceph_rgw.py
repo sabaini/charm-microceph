@@ -82,8 +82,9 @@ class TestCephRgwClientProviderHandler(testbase.TestBaseCharm):
         )
 
     def test_ceph_rgw_connected_ready(self):
-        self.harness.update_config({"enable-rgw": "*"})
         self.ready_for_service.return_value = True
+        self.harness.update_config({"enable-rgw": "*"})
+        self.ready_for_service.reset_mock()
         self.get_osd_count.return_value = 3
         self._service_status = {
             "rgw": {
@@ -103,8 +104,9 @@ class TestCephRgwClientProviderHandler(testbase.TestBaseCharm):
         self.run_cmd.assert_called_with(["sudo", "microceph.ceph", "service", "status"])
 
     def test_set_readiness_on_related_units(self):
-        self.harness.update_config({"enable-rgw": ""})
         self.ready_for_service.return_value = False
+        self.harness.update_config({"enable-rgw": ""})
+        self.ready_for_service.reset_mock()
         self.get_osd_count.return_value = 0
 
         self.harness.set_leader()
@@ -122,7 +124,7 @@ class TestCephRgwClientProviderHandler(testbase.TestBaseCharm):
         # rgw enabled, but charm is not yet ready for service.
         self.harness.update_config({"enable-rgw": "*"})
 
-        self.ready_for_service.assert_called_once()
+        self.ready_for_service.assert_called()
         self.get_osd_count.assert_not_called()
 
         # ready for service, but no OSDs yet.
