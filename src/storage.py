@@ -230,16 +230,6 @@ class StorageHandler(Object):
                 self._set_storage_config_idle_status()
                 return
 
-            if self._has_unrelated_workload_status():
-                status = self.charm.status.status
-                logger.debug(
-                    "Skipping config-driven storage processing because workload status is "
-                    "owned by another handler status=%s message=%s",
-                    status.name,
-                    getattr(status, "message", ""),
-                )
-                return
-
             self._validate_storage_config(storage_request)
 
             if not self.charm.ready_for_service():
@@ -510,10 +500,12 @@ class StorageHandler(Object):
 
         return False
 
-    def _has_unrelated_workload_status(self) -> bool:
-        """Whether another handler already owns a blocking workload status."""
+    def _unrelated_blocked_workload_status(self):
+        """Return a pre-existing non-storage blocked workload status, if any."""
         status = self.charm.status.status
-        return isinstance(status, BlockedStatus) and not self._is_storage_config_status(status)
+        if isinstance(status, BlockedStatus) and not self._is_storage_config_status(status):
+            return status
+        return None
 
     def _set_storage_config_idle_status(self):
         """Restore ready status for storage-config no-op/recovery paths."""
@@ -592,8 +584,16 @@ class StorageHandler(Object):
             storage_request["flags"]["wipe_osd"],
             storage_request["flags"]["encrypt_osd"],
         )
+        preserved_status = self._unrelated_blocked_workload_status()
         try:
-            self.charm.status.set(MaintenanceStatus("Processing storage config"))
+            if preserved_status is None:
+                self.charm.status.set(MaintenanceStatus("Processing storage config"))
+            else:
+                logger.debug(
+                    "Processing storage config while preserving unrelated blocked status "
+                    "message=%s",
+                    preserved_status.message,
+                )
             logger.debug(
                 "Calling microceph.add_disk_match_cmd for request=%s",
                 json.dumps(storage_request, sort_keys=True),
@@ -613,7 +613,15 @@ class StorageHandler(Object):
             )
             if output and output.strip():
                 logger.info("Storage config command output:\n%s", output.strip())
-            self.charm.status.set(ActiveStatus("charm is ready"))
+            if preserved_status is not None:
+                logger.debug(
+                    "Restoring unrelated blocked status after successful storage config apply "
+                    "message=%s",
+                    preserved_status.message,
+                )
+                self.charm.status.set(preserved_status)
+            else:
+                self.charm.status.set(ActiveStatus("charm is ready"))
             self._set_osd_config_cache(storage_request)
             logger.info(
                 "Successfully processed storage config osd_match=%s wal_enabled=%s "
@@ -629,7 +637,15 @@ class StorageHandler(Object):
                     "No devices matched config-driven OSD request request=%s",
                     json.dumps(storage_request, sort_keys=True),
                 )
-                self.charm.status.set(ActiveStatus("charm is ready"))
+                if preserved_status is not None:
+                    logger.debug(
+                        "Restoring unrelated blocked status after no-op storage config "
+                        "message=%s",
+                        preserved_status.message,
+                    )
+                    self.charm.status.set(preserved_status)
+                else:
+                    self.charm.status.set(ActiveStatus("charm is ready"))
                 self._set_osd_config_cache(storage_request)
                 return
 

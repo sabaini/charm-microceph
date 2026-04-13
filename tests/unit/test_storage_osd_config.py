@@ -417,6 +417,39 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         )
 
     @patch("storage.microceph.add_disk_match_cmd")
+    def test_unrelated_blocked_status_survives_storage_apply(self, add_disk_match_cmd):
+        """Storage reconciliation should still run without clearing unrelated blocks."""
+        self._setup_ready_charm()
+        add_disk_match_cmd.return_value = "configured"
+
+        self.harness.update_config(
+            {
+                "enable-rgw": "invalid",
+                "osd-devices": "eq(@type,'nvme')",
+            }
+        )
+
+        add_disk_match_cmd.assert_called_once_with(
+            osd_match="eq(@type,'nvme')",
+            wal_match=None,
+            wal_size=None,
+            db_match=None,
+            db_size=None,
+            wipe=False,
+            encrypt=False,
+            wal_wipe=False,
+            wal_encrypt=False,
+            db_wipe=False,
+            db_encrypt=False,
+        )
+        self.assertTrue(self.storage._stored.last_storage_config_signature)
+        self.assertIsInstance(self.harness.charm.status.status, BlockedStatus)
+        self.assertEqual(
+            self.harness.charm.status.status.message,
+            "Improper value for config enable-rgw",
+        )
+
+    @patch("storage.microceph.add_disk_match_cmd")
     def test_missing_wal_size_blocks_without_snap_call(self, add_disk_match_cmd):
         """wal-devices requires wal-size."""
         self._setup_ready_charm()
