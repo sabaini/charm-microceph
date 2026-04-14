@@ -593,8 +593,9 @@ jobs:
           date
           # constraints to deploy on virtual machine.
           juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=8G"
-          # wait for charm to bootstrap and OSD devices to enroll.
+          # wait for charm to bootstrap, then give deferred storage events time to start enrolling OSDs.
           juju wait-for unit microceph/0 --timeout '30m' --query='workload-status=="active" && juju-status=="idle"'
+          sleep 30
           bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
@@ -614,6 +615,7 @@ jobs:
           set -eux
           juju add-storage microceph/0 osd-standalone='2G,1'
           juju wait-for unit microceph/0 --timeout '20m' --query='workload-status=="active" && juju-status=="idle"'
+          sleep 30
           bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
