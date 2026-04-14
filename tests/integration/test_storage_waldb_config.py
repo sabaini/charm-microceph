@@ -132,7 +132,7 @@ def _resolve_osd_link(juju_vm: jubilant.Juju, osd_num: int, link_name: str) -> s
     """Resolve an OSD data-dir symlink such as ``block.db`` or ``block.wal``."""
     unit_name = helpers.first_unit_name(juju_vm.status(), APP_NAME)
     script = (
-        f'path=/var/snap/microceph/common/data/osd/ceph-{osd_num}/{link_name}; '
+        f"path=/var/snap/microceph/common/data/osd/ceph-{osd_num}/{link_name}; "
         'if [ -e "$path" ]; then readlink -f "$path"; fi'
     )
     return juju_vm.ssh(unit_name, "sudo", "bash", "-ec", script).strip()
