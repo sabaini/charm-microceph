@@ -66,9 +66,61 @@ class TestConfigDrivenStorage(testbase.TestBaseCharm):
         """Return the storage-config status slot."""
         return self.storage.storage_config_status.status
 
+    def _storage_status(self):
+        """Return the storage status slot."""
+        return self.storage.storage_status.status
+
     def _workload_status(self):
         """Return the shared workload status slot."""
         return self.harness.charm.status.status
+
+    def test_attached_storage_restores_ready_workload_message(self):
+        """Successful Juju storage events should restore a human-readable ready message."""
+        self._setup_ready_charm()
+        self.harness.charm.status.set(ActiveStatus(""))
+        event = MagicMock()
+
+        with (
+            patch.object(self.storage, "_clean_stale_osd_data"),
+            patch.object(
+                self.storage,
+                "_fetch_filtered_storages",
+                return_value=["osd-standalone/6"],
+            ),
+            patch.object(self.storage, "_get_osd_id", return_value=None),
+            patch.object(self.storage, "_enroll_disks_in_batch"),
+        ):
+            self.storage._on_osd_standalone_attached(event)
+
+        event.defer.assert_not_called()
+        self.assertIsInstance(self._storage_status(), ActiveStatus)
+        self.assertEqual(self._storage_status().message, "")
+        self.assertIsInstance(self._workload_status(), ActiveStatus)
+        self.assertEqual(self._workload_status().message, "charm is ready")
+
+    def test_attached_storage_does_not_clobber_blocked_workload_status(self):
+        """Storage attach should not clear unrelated workload failures."""
+        self._setup_ready_charm()
+        self.harness.charm.status.set(BlockedStatus("Improper value for config enable-rgw"))
+        event = MagicMock()
+
+        with (
+            patch.object(self.storage, "_clean_stale_osd_data"),
+            patch.object(
+                self.storage,
+                "_fetch_filtered_storages",
+                return_value=["osd-standalone/6"],
+            ),
+            patch.object(self.storage, "_get_osd_id", return_value=None),
+            patch.object(self.storage, "_enroll_disks_in_batch"),
+        ):
+            self.storage._on_osd_standalone_attached(event)
+
+        self.assertIsInstance(self._workload_status(), BlockedStatus)
+        self.assertEqual(
+            self._workload_status().message,
+            "Improper value for config enable-rgw",
+        )
 
     def test_normalize_storage_config_trims_and_includes_waldb(self):
         """Normalization trims whitespace and includes WAL/DB settings."""

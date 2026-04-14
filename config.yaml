@@ -128,4 +128,5 @@ options:
 
       Note: WAL/DB config and these flags only apply to config-driven
       provisioning initiated by osd-devices. They are not in effect when using
-      the add-osd action; use action parameters for that path.
+      the add-osd action, which currently supports only device-level wipe and
+      encryption parameters.

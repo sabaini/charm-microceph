@@ -118,6 +118,7 @@ class StorageHandler(Object):
             self.storage_status.set(MaintenanceStatus("Enrolling OSDs"))
             self._enroll_disks_in_batch(enroll)
             self.storage_status.set(ActiveStatus(""))
+            self._restore_ready_workload_status()
 
     def _on_storage_detaching(self, event: StorageDetachingEvent):
         """Unified storage detaching handler."""
@@ -133,15 +134,46 @@ class StorageHandler(Object):
         with sunbeam_guard.guard(self._storage_guard, self.name):
             try:
                 self.remove_osd(osd_num)
+                self._restore_ready_workload_status()
             except CalledProcessError as e:
                 err_msg = self._error_message(e)
                 if self._is_safety_failure(err_msg):
-                    warning = f"Storage {event.storage.full_id} detached, provide replacement for osd.{osd_num}."
+                    warning = (
+                        f"Storage {event.storage.full_id} detached, provide replacement "
+                        f"for osd.{osd_num}."
+                    )
                     logger.warning(warning)
                     # forcefully remove OSD and entry from stored state
                     # because Juju WILL deprovision storage.
                     self.remove_osd(osd_num, force=True)
                     raise sunbeam_guard.BlockedExceptionError(warning)
+
+    def _restore_ready_workload_status(self) -> None:
+        """Restore the ready message without clearing non-idle workload states."""
+        workload_status = self.charm.status.status
+        current_message = getattr(workload_status, "message", "")
+
+        if workload_status.name == "unknown":
+            self.charm.status.set(ActiveStatus("charm is ready"))
+            return
+
+        if workload_status.name != "active":
+            logger.debug(
+                "Skipping ready workload status restore because workload slot is %s: %s",
+                workload_status.name,
+                current_message,
+            )
+            return
+
+        if current_message and current_message != "charm is ready":
+            logger.debug(
+                "Skipping ready workload status restore because workload slot already has "
+                "an active message: %s",
+                current_message,
+            )
+            return
+
+        self.charm.status.set(ActiveStatus("charm is ready"))
 
     def _add_osd_action(self, event: ActionEvent):
         """Add OSD disks to microceph."""

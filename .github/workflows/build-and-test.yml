@@ -594,7 +594,7 @@ jobs:
           # constraints to deploy on virtual machine.
           juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=8G"
           # wait for charm to bootstrap and OSD devices to enroll.
-          juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit microceph/0 --timeout '30m' --query='workload-status=="active" && juju-status=="idle"'
           bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
@@ -602,7 +602,7 @@ jobs:
         run: |
           set -eux
           juju detach-storage osd-standalone/0
-          juju wait-for unit microceph/0 --timeout '20m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit microceph/0 --timeout '20m' --query='workload-status=="active" && juju-status=="idle"'
           # wait before completely removing the storage.
           sleep 1m
           juju remove-storage osd-standalone/0
@@ -613,7 +613,7 @@ jobs:
         run: |
           set -eux
           juju add-storage microceph/0 osd-standalone='2G,1'
-          juju wait-for unit microceph/0 --timeout '20m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit microceph/0 --timeout '20m' --query='workload-status=="active" && juju-status=="idle"'
           bash tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
@@ -891,7 +891,7 @@ jobs:
           # constraints to deploy on virtual machine.
           juju deploy ~/artifacts/microceph.charm --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=8G"
           # wait for charm to bootstrap and OSD devices to enroll.
-          juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit microceph/0 --timeout '30m' --query='workload-status=="active" && juju-status=="idle"'
           bash ./tests/scripts/ci_helpers.sh check_osd_count microceph/0 6
           date
 
@@ -965,8 +965,8 @@ jobs:
           juju deploy ~/artifacts/microceph.charm primary --storage osd-standalone='2G,3' --constraints="virt-type=virtual-machine root-disk=25G mem=8G"
           juju deploy ~/artifacts/microceph.charm secondary --storage osd-standalone='2G,3' --constraints="virt-type=virtual-machine root-disk=25G mem=8G"
           # wait for charm to bootstrap and OSD devices to enroll.
-          juju wait-for unit primary/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
-          juju wait-for unit secondary/0 --timeout '15m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit primary/0 --timeout '30m' --query='workload-status=="active" && juju-status=="idle"'
+          juju wait-for unit secondary/0 --timeout '15m' --query='workload-status=="active" && juju-status=="idle"'
           bash ./tests/scripts/ci_helpers.sh check_osd_count primary/0 3
           bash ./tests/scripts/ci_helpers.sh check_osd_count secondary/0 3
           date
@@ -1184,7 +1184,7 @@ jobs:
           set -x
           juju add-unit microceph -n 1
           sleep 60s
-          juju wait-for unit microceph/3 --query='workload-message=="(workload) charm is ready"' --timeout=20m
+          juju wait-for unit microceph/3 --query='workload-status=="active" && juju-status=="idle"' --timeout=20m
 
            # "juju" substring is a part of all hosts, so it will fetch total OSD count
           ./tests/scripts/ci_helpers.sh ensure_osd_count_on_host "juju" 9
@@ -1273,7 +1273,7 @@ jobs:
             --storage osd-standalone='2G,6' --constraints="virt-type=virtual-machine root-disk=24G mem=16G cores=4"
           # Wait for the LXD VM to be fully provisioned before waiting for the unit
           juju wait-for machine 0 --timeout '10m' --query='status=="started"'
-          juju wait-for unit microceph/0 --timeout '30m' --query='workload-message=="(workload) charm is ready"'
+          juju wait-for unit microceph/0 --timeout '30m' --query='workload-status=="active" && juju-status=="idle"'
           juju status
 
       - name: Integrate MicroCeph with COS via ${{ matrix.agent }}
