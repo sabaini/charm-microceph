@@ -69,9 +69,10 @@ def attached_lxd_volume(juju: jubilant.Juju, deployed_microceph: str) -> Iterato
     model_name = juju.status().model.name
     vol_name = f"functest-{model_name}"
 
+    existing_disks = set(lxd.list_disks(juju, unit_name))
     lxd.create_and_attach_volume(pool, vol_name, inst_id)
     try:
-        disk_path = lxd.wait_for_disk(juju, unit_name)
+        disk_path = lxd.wait_for_disk(juju, unit_name, existing_disks=existing_disks)
         logger.info(f"Block device available at {disk_path}")
         yield disk_path
     finally:

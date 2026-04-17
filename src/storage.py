@@ -18,8 +18,11 @@
 
 import json
 import logging
+from dataclasses import asdict
 from subprocess import CalledProcessError, TimeoutExpired, run
+from types import SimpleNamespace
 
+import ops_sunbeam.compound_status as compound_status
 import ops_sunbeam.guard as sunbeam_guard
 from ops.charm import ActionEvent, CharmBase, StorageAttachedEvent, StorageDetachingEvent
 from ops.framework import Object, StoredState
@@ -61,9 +64,16 @@ class StorageHandler(Object):
             last_osd_devices="",
             last_wipe_osd=False,
             last_encrypt_osd=False,
+            last_storage_config_signature="",
         )
         self.charm = charm
         self.name = name
+        self.storage_status = compound_status.Status(self.name)
+        self.storage_config_status = compound_status.Status(f"{self.name}-config")
+        self.charm.status_pool.add(self.storage_status)
+        self.charm.status_pool.add(self.storage_config_status)
+        self._storage_guard = SimpleNamespace(status=self.storage_status)
+        self._storage_config_guard = SimpleNamespace(status=self.storage_config_status)
 
         # Attach handlers
         self.framework.observe(
@@ -104,10 +114,11 @@ class StorageHandler(Object):
                 enroll.append(storage)
 
         logger.debug(f"Enroll list {enroll}")
-        with sunbeam_guard.guard(self.charm, self.name):
-            self.charm.status.set(MaintenanceStatus("Enrolling OSDs"))
+        with sunbeam_guard.guard(self._storage_guard, self.name):
+            self.storage_status.set(MaintenanceStatus("Enrolling OSDs"))
             self._enroll_disks_in_batch(enroll)
-            self.charm.status.set(ActiveStatus("charm is ready"))
+            self.storage_status.set(ActiveStatus(""))
+            self._restore_ready_workload_status()
 
     def _on_storage_detaching(self, event: StorageDetachingEvent):
         """Unified storage detaching handler."""
@@ -120,18 +131,49 @@ class StorageHandler(Object):
         if osd_num is None:
             return
 
-        with sunbeam_guard.guard(self.charm, self.name):
+        with sunbeam_guard.guard(self._storage_guard, self.name):
             try:
                 self.remove_osd(osd_num)
+                self._restore_ready_workload_status()
             except CalledProcessError as e:
                 err_msg = self._error_message(e)
                 if self._is_safety_failure(err_msg):
-                    warning = f"Storage {event.storage.full_id} detached, provide replacement for osd.{osd_num}."
+                    warning = (
+                        f"Storage {event.storage.full_id} detached, provide replacement "
+                        f"for osd.{osd_num}."
+                    )
                     logger.warning(warning)
                     # forcefully remove OSD and entry from stored state
                     # because Juju WILL deprovision storage.
                     self.remove_osd(osd_num, force=True)
                     raise sunbeam_guard.BlockedExceptionError(warning)
+
+    def _restore_ready_workload_status(self) -> None:
+        """Restore the ready message without clearing non-idle workload states."""
+        workload_status = self.charm.status.status
+        current_message = getattr(workload_status, "message", "")
+
+        if workload_status.name == "unknown":
+            self.charm.status.set(ActiveStatus("charm is ready"))
+            return
+
+        if workload_status.name != "active":
+            logger.debug(
+                "Skipping ready workload status restore because workload slot is %s: %s",
+                workload_status.name,
+                current_message,
+            )
+            return
+
+        if current_message and current_message != "charm is ready":
+            logger.debug(
+                "Skipping ready workload status restore because workload slot already has "
+                "an active message: %s",
+                current_message,
+            )
+            return
+
+        self.charm.status.set(ActiveStatus("charm is ready"))
 
     def _add_osd_action(self, event: ActionEvent):
         """Add OSD disks to microceph."""
@@ -203,104 +245,394 @@ class StorageHandler(Object):
         event.set_results({"osds": osds, "unpartitioned-disks": available_disks})
 
     def _on_config_changed_osd_devices(self, event):
-        """Process osd-devices config option.
+        """Process config-driven storage requests for OSD/WAL/DB matching."""
+        with sunbeam_guard.guard(self._storage_config_guard, f"{self.name}-config"):
+            storage_request = self._normalize_storage_config()
+            logger.debug(
+                "Normalized storage config request: %s",
+                json.dumps(storage_request, sort_keys=True),
+            )
 
-        This method is called on config-changed events to enroll matching
-        devices as OSDs. The DSL expression is passed to the MicroCeph snap
-        which performs device matching and enrollment.
-        """
-        osd_devices = self.charm.model.config.get("osd-devices", "")
-        device_add_flags = self.charm.model.config.get("device-add-flags", "")
-        osd_match = osd_devices.strip()
-
-        # Skip if osd-devices is not configured
-        if not osd_match:
-            logger.debug("osd-devices config not set, skipping config-based OSD enrollment")
-            self._reset_osd_config_cache()
-            return
-
-        # Wait for cluster to be ready
-        if not self.charm.ready_for_service():
-            logger.warning("MicroCeph not ready yet, deferring osd-devices processing")
-            event.defer()
-            return
-
-        # Execute the OSD match command
-        with sunbeam_guard.guard(self.charm, self.name):
-            flags = self._parse_osd_device_flags(device_add_flags)
-            if self._is_cached_osd_config(osd_match, flags):
+            if not storage_request["osd_match"]:
+                if self._has_ignored_waldb_config():
+                    logger.info("WAL/DB settings ignored because no new OSDs are being added")
                 logger.debug(
-                    "Skipping osd-devices processing: unchanged config osd_match=%s wipe=%s encrypt=%s",
-                    osd_match,
-                    flags.wipe_osd,
-                    flags.encrypt_osd,
+                    "osd-devices config not set, skipping config-based storage enrollment"
                 )
+                self._reset_osd_config_cache()
+                self._set_storage_config_idle_status()
                 return
 
-            self._apply_osd_config(osd_match, flags)
+            self._validate_storage_config(storage_request)
+
+            if not self.charm.ready_for_service():
+                logger.warning("MicroCeph not ready yet, deferring storage config processing")
+                event.defer()
+                return
+
+            if self._is_cached_osd_config(storage_request):
+                logger.debug(
+                    "Skipping storage config processing because OSD-affecting inputs are "
+                    "unchanged; exact repeats and WAL/DB-only changes both hit this path. "
+                    "cacheable_request=%s signature=%s",
+                    json.dumps(self._cacheable_osd_request(storage_request), sort_keys=True),
+                    self._storage_config_signature(storage_request),
+                )
+                if self._storage_request_has_auxiliary_config(storage_request):
+                    logger.info(
+                        "Skipping config-driven WAL/DB apply because no new OSD selection was "
+                        "detected; WAL/DB settings are only applied when new OSDs are added "
+                        "osd_match=%s wal_enabled=%s db_enabled=%s",
+                        storage_request["osd_match"],
+                        bool(storage_request["wal_match"]),
+                        bool(storage_request["db_match"]),
+                    )
+                self._set_storage_config_idle_status()
+                return
+
+            self._apply_osd_config(storage_request)
+
+    def _normalize_storage_config(self) -> dict:
+        """Normalize config-driven storage settings into a stable request dict."""
+        raw_config = {
+            "osd-devices": self.charm.model.config.get("osd-devices", ""),
+            "wal-devices": self.charm.model.config.get("wal-devices", ""),
+            "db-devices": self.charm.model.config.get("db-devices", ""),
+            "wal-size": self.charm.model.config.get("wal-size", ""),
+            "db-size": self.charm.model.config.get("db-size", ""),
+            "device-add-flags": self.charm.model.config.get("device-add-flags", ""),
+        }
+        logger.debug(
+            "Raw storage config values before normalization: %s",
+            json.dumps(raw_config, sort_keys=True),
+        )
+
+        osd_match = self._normalized_config_value("osd-devices")
+        if not osd_match:
+            normalized = {
+                "osd_match": None,
+                "wal_match": None,
+                "db_match": None,
+                "wal_size": None,
+                "db_size": None,
+                "flags": asdict(DeviceAddFlags()),
+            }
+            logger.debug(
+                "Normalized storage config without osd-devices: %s",
+                json.dumps(normalized, sort_keys=True),
+            )
+            return normalized
+
+        flags = self._parse_osd_device_flags(self.charm.model.config.get("device-add-flags", ""))
+        wal_match = self._normalized_config_value("wal-devices")
+        db_match = self._normalized_config_value("db-devices")
+        raw_wal_size = self._normalized_config_value("wal-size")
+        raw_db_size = self._normalized_config_value("db-size")
+
+        wal_size = raw_wal_size if wal_match else None
+        db_size = raw_db_size if db_match else None
+
+        if not wal_match and (raw_wal_size or flags.wipe_wal or flags.encrypt_wal):
+            logger.debug(
+                "Dropping WAL size/flags because wal-devices is unset: raw_wal_size=%s "
+                "wipe_wal=%s encrypt_wal=%s",
+                raw_wal_size,
+                flags.wipe_wal,
+                flags.encrypt_wal,
+            )
+            flags.wipe_wal = False
+            flags.encrypt_wal = False
+
+        if not db_match and (raw_db_size or flags.wipe_db or flags.encrypt_db):
+            logger.debug(
+                "Dropping DB size/flags because db-devices is unset: raw_db_size=%s "
+                "wipe_db=%s encrypt_db=%s",
+                raw_db_size,
+                flags.wipe_db,
+                flags.encrypt_db,
+            )
+            flags.wipe_db = False
+            flags.encrypt_db = False
+
+        normalized = {
+            "osd_match": osd_match,
+            "wal_match": wal_match,
+            "db_match": db_match,
+            "wal_size": wal_size,
+            "db_size": db_size,
+            "flags": asdict(flags),
+        }
+        logger.debug(
+            "Normalized storage config with osd-devices: %s",
+            json.dumps(normalized, sort_keys=True),
+        )
+        return normalized
+
+    def _normalized_config_value(self, key: str):
+        """Trim a string config value and convert empty strings to None."""
+        value = (self.charm.model.config.get(key, "") or "").strip()
+        return value or None
+
+    def _has_ignored_waldb_config(self) -> bool:
+        """Whether WAL/DB config was provided without an OSD activation request."""
+        configured_keys = [
+            key
+            for key in ("wal-devices", "db-devices", "wal-size", "db-size")
+            if self._normalized_config_value(key)
+        ]
+        if configured_keys:
+            logger.debug(
+                "Detected WAL/DB config values without osd-devices: keys=%s",
+                configured_keys,
+            )
+            return True
+
+        waldb_flags = {"wipe:wal", "encrypt:wal", "wipe:db", "encrypt:db"}
+        raw_flags = (self.charm.model.config.get("device-add-flags", "") or "").split(",")
+        configured_flags = [
+            flag.strip().lower()
+            for flag in raw_flags
+            if flag.strip() and flag.strip().lower() in waldb_flags
+        ]
+        if configured_flags:
+            logger.debug(
+                "Detected WAL/DB device-add-flags without osd-devices: flags=%s",
+                configured_flags,
+            )
+            return True
+
+        return False
+
+    def _storage_request_has_auxiliary_config(self, storage_request: dict) -> bool:
+        """Whether a normalized request contains any WAL/DB-specific settings."""
+        flags = storage_request["flags"]
+        return bool(
+            storage_request["wal_match"]
+            or storage_request["db_match"]
+            or flags["wipe_wal"]
+            or flags["encrypt_wal"]
+            or flags["wipe_db"]
+            or flags["encrypt_db"]
+        )
+
+    def _cacheable_osd_request(self, storage_request: dict) -> dict:
+        """Return the subset of storage config that can trigger a new snap command."""
+        return {
+            "osd_match": storage_request["osd_match"],
+            "flags": {
+                "wipe_osd": storage_request["flags"]["wipe_osd"],
+                "encrypt_osd": storage_request["flags"]["encrypt_osd"],
+            },
+        }
+
+    def _storage_config_signature(self, storage_request: dict) -> str:
+        """Build a stable signature for OSD-affecting storage inputs."""
+        return json.dumps(
+            self._cacheable_osd_request(storage_request),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def _reset_osd_config_cache(self):
-        """Reset cache for last successfully applied osd-devices configuration."""
+        """Reset cache for last successfully applied config-driven storage request."""
+        logger.debug(
+            "Resetting config-driven storage cache previous_osd_match=%s previous_wipe=%s "
+            "previous_encrypt=%s previous_signature=%s",
+            self._stored.last_osd_devices,
+            self._stored.last_wipe_osd,
+            self._stored.last_encrypt_osd,
+            self._stored.last_storage_config_signature,
+        )
         self._stored.last_osd_devices = ""
         self._stored.last_wipe_osd = False
         self._stored.last_encrypt_osd = False
-        logger.debug("Reset osd-devices config cache")
+        self._stored.last_storage_config_signature = ""
+        logger.debug("Reset config-driven storage cache")
 
-    def _set_osd_config_cache(self, osd_match: str, flags: DeviceAddFlags):
-        """Persist cache for last successfully applied osd-devices configuration."""
-        self._stored.last_osd_devices = osd_match
-        self._stored.last_wipe_osd = flags.wipe_osd
-        self._stored.last_encrypt_osd = flags.encrypt_osd
+    def _set_osd_config_cache(self, storage_request: dict):
+        """Persist cache for last successfully applied config-driven storage request."""
+        cacheable_request = self._cacheable_osd_request(storage_request)
+        self._stored.last_osd_devices = cacheable_request["osd_match"]
+        self._stored.last_wipe_osd = cacheable_request["flags"]["wipe_osd"]
+        self._stored.last_encrypt_osd = cacheable_request["flags"]["encrypt_osd"]
+        self._stored.last_storage_config_signature = self._storage_config_signature(
+            storage_request
+        )
         logger.debug(
-            "Updated osd-devices config cache osd_match=%s wipe=%s encrypt=%s",
-            osd_match,
-            flags.wipe_osd,
-            flags.encrypt_osd,
+            "Persisted storage config cache cacheable_request=%s signature=%s",
+            json.dumps(cacheable_request, sort_keys=True),
+            self._stored.last_storage_config_signature,
         )
 
-    def _is_cached_osd_config(self, osd_match: str, flags: DeviceAddFlags) -> bool:
-        """Check whether current osd-devices configuration was already applied."""
-        return (
-            self._stored.last_osd_devices == osd_match
-            and self._stored.last_wipe_osd == flags.wipe_osd
-            and self._stored.last_encrypt_osd == flags.encrypt_osd
+    def _is_cached_osd_config(self, storage_request: dict) -> bool:
+        """Check whether current config-driven storage request was already applied."""
+        requested = self._cacheable_osd_request(storage_request)
+        requested_signature = self._storage_config_signature(storage_request)
+        last_signature = self._stored.last_storage_config_signature
+        legacy_state = {
+            "osd_match": self._stored.last_osd_devices,
+            "wipe_osd": self._stored.last_wipe_osd,
+            "encrypt_osd": self._stored.last_encrypt_osd,
+        }
+        logger.debug(
+            "Checking storage config cache requested=%s requested_signature=%s "
+            "stored_signature=%s legacy_state=%s",
+            json.dumps(requested, sort_keys=True),
+            requested_signature,
+            last_signature,
+            json.dumps(legacy_state, sort_keys=True),
         )
+
+        if last_signature:
+            if last_signature == requested_signature:
+                logger.debug("Storage config cache hit via current signature")
+                return True
+
+            try:
+                cached_request = json.loads(last_signature)
+            except (TypeError, ValueError):
+                cached_request = None
+                logger.debug(
+                    "Stored storage config signature is not parseable as JSON request: %r",
+                    last_signature,
+                )
+
+            if isinstance(cached_request, dict):
+                logger.debug(
+                    "Parsed stored storage config signature into request=%s",
+                    json.dumps(cached_request, sort_keys=True),
+                )
+                cached_flags = cached_request.get("flags") or {}
+                if (
+                    cached_request.get("osd_match") == requested["osd_match"]
+                    and cached_flags.get("wipe_osd", False) == requested["flags"]["wipe_osd"]
+                    and cached_flags.get("encrypt_osd", False) == requested["flags"]["encrypt_osd"]
+                ):
+                    logger.debug("Storage config cache hit via parsed legacy signature")
+                    return True
+
+        legacy_hit = (
+            self._stored.last_osd_devices == requested["osd_match"]
+            and self._stored.last_wipe_osd == requested["flags"]["wipe_osd"]
+            and self._stored.last_encrypt_osd == requested["flags"]["encrypt_osd"]
+        )
+        if legacy_hit:
+            logger.debug("Storage config cache hit via legacy stored fields")
+            return True
+
+        logger.debug("Storage config cache miss")
+        return False
+
+    def _set_storage_config_idle_status(self):
+        """Clear config-driven storage status for no-op/recovery paths."""
+        status = self.storage_config_status.status
+        if isinstance(status, ActiveStatus) and not status.message:
+            logger.debug("Storage-config status already active")
+            return
+
+        logger.debug("Restoring active status for storage-config idle path")
+        self.storage_config_status.set(ActiveStatus(""))
 
     def _parse_osd_device_flags(self, device_add_flags: str) -> DeviceAddFlags:
-        """Parse device-add-flags for osd-devices handling."""
+        """Parse device-add-flags for config-driven storage handling."""
         try:
             return parse_device_add_flags(device_add_flags)
         except ValueError as e:
             raise sunbeam_guard.BlockedExceptionError(f"Invalid device-add-flags: {e}")
 
-    def _apply_osd_config(self, osd_match: str, flags: DeviceAddFlags):
-        """Execute OSD enrollment via osd-match and cache successful configs."""
+    def _validate_storage_config(self, storage_request: dict):
+        """Validate the minimal charm-owned storage config combinations."""
+        if storage_request["wal_match"] and not storage_request["wal_size"]:
+            logger.info(
+                "Blocking config-driven storage because wal-devices was set without wal-size "
+                "osd_match=%s wal_match=%s",
+                storage_request["osd_match"],
+                storage_request["wal_match"],
+            )
+            logger.debug(
+                "Invalid storage config detected: wal-devices is set without wal-size "
+                "request=%s",
+                json.dumps(storage_request, sort_keys=True),
+            )
+            raise sunbeam_guard.BlockedExceptionError(
+                "Invalid storage config: wal-devices requires wal-size"
+            )
+        if storage_request["db_match"] and not storage_request["db_size"]:
+            logger.info(
+                "Blocking config-driven storage because db-devices was set without db-size "
+                "osd_match=%s db_match=%s",
+                storage_request["osd_match"],
+                storage_request["db_match"],
+            )
+            logger.debug(
+                "Invalid storage config detected: db-devices is set without db-size request=%s",
+                json.dumps(storage_request, sort_keys=True),
+            )
+            raise sunbeam_guard.BlockedExceptionError(
+                "Invalid storage config: db-devices requires db-size"
+            )
+
+    def _apply_osd_config(self, storage_request: dict):
+        """Execute config-driven storage enrollment and cache successful requests."""
         logger.info(
-            "Processing osd-devices config osd_match=%s wipe=%s encrypt=%s",
-            osd_match,
-            flags.wipe_osd,
-            flags.encrypt_osd,
+            "Processing storage config request: %s",
+            json.dumps(storage_request, sort_keys=True),
+        )
+        logger.info(
+            "Applying config-driven storage osd_match=%s wal_enabled=%s db_enabled=%s "
+            "wipe=%s encrypt=%s",
+            storage_request["osd_match"],
+            bool(storage_request["wal_match"]),
+            bool(storage_request["db_match"]),
+            storage_request["flags"]["wipe_osd"],
+            storage_request["flags"]["encrypt_osd"],
         )
         try:
-            self.charm.status.set(MaintenanceStatus("Processing osd-devices config"))
-            microceph.add_osd_match_cmd(
-                osd_match=osd_match,
-                wipe=flags.wipe_osd,
-                encrypt=flags.encrypt_osd,
+            self.storage_config_status.set(MaintenanceStatus("Processing storage config"))
+            logger.debug(
+                "Calling microceph.add_disk_match_cmd for request=%s",
+                json.dumps(storage_request, sort_keys=True),
             )
-            self.charm.status.set(ActiveStatus("charm is ready"))
-            self._set_osd_config_cache(osd_match, flags)
-            logger.info("Successfully processed osd-devices config: %s", osd_match)
+            output = microceph.add_disk_match_cmd(
+                osd_match=storage_request["osd_match"],
+                wal_match=storage_request["wal_match"],
+                wal_size=storage_request["wal_size"],
+                db_match=storage_request["db_match"],
+                db_size=storage_request["db_size"],
+                wipe=storage_request["flags"]["wipe_osd"],
+                encrypt=storage_request["flags"]["encrypt_osd"],
+                wal_wipe=storage_request["flags"]["wipe_wal"],
+                wal_encrypt=storage_request["flags"]["encrypt_wal"],
+                db_wipe=storage_request["flags"]["wipe_db"],
+                db_encrypt=storage_request["flags"]["encrypt_db"],
+            )
+            if output and output.strip():
+                logger.info("Storage config command output:\n%s", output.strip())
+            self.storage_config_status.set(ActiveStatus(""))
+            self._set_osd_config_cache(storage_request)
+            logger.info(
+                "Successfully processed storage config osd_match=%s wal_enabled=%s "
+                "db_enabled=%s",
+                storage_request["osd_match"],
+                bool(storage_request["wal_match"]),
+                bool(storage_request["db_match"]),
+            )
         except (CalledProcessError, TimeoutExpired) as e:
             err_msg = self._error_message(e)
-            # "no devices matched" is not an error - it's a valid scenario
             if "no devices matched" in err_msg.lower():
-                logger.info("No devices matched osd-devices DSL expression")
-                self.charm.status.set(ActiveStatus("charm is ready"))
-                self._set_osd_config_cache(osd_match, flags)
+                logger.info(
+                    "No devices matched config-driven OSD request request=%s",
+                    json.dumps(storage_request, sort_keys=True),
+                )
+                self.storage_config_status.set(ActiveStatus(""))
+                self._set_osd_config_cache(storage_request)
                 return
 
-            logger.error("Failed to process osd-devices config %s: %s", osd_match, err_msg)
+            logger.error(
+                "Failed to process storage config request=%s error=%s",
+                json.dumps(storage_request, sort_keys=True),
+                err_msg,
+            )
             raise sunbeam_guard.BlockedExceptionError(f"Failed to add OSDs via config: {err_msg}")
 
     # helper functions
@@ -324,7 +656,7 @@ class StorageHandler(Object):
 
     def _error_message(self, exc: Exception) -> str:
         """Build an actionable error message from subprocess exceptions."""
-        return getattr(exc, "stderr", None) or str(exc)
+        return getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or str(exc)
 
     def _run(self, cmd: list) -> str:
         """Wrapper around subprocess run for storage commands."""

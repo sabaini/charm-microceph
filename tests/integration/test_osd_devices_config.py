@@ -109,9 +109,15 @@ def attached_block_device(juju_vm: jubilant.Juju, deployed_microceph) -> Iterato
     model_name = juju_vm.status().model.name
     vol_name = f"osd-cfg-test-{model_name}"
 
+    existing_disks = set(lxd.list_disks(juju_vm, unit_name))
     lxd.create_and_attach_volume(pool, vol_name, inst_id, size="3GB")
     try:
-        disk_path = lxd.wait_for_disk(juju_vm, unit_name, size_pattern="3G|2.8G|2.9G")
+        disk_path = lxd.wait_for_disk(
+            juju_vm,
+            unit_name,
+            size_pattern="3G|2.8G|2.9G",
+            existing_disks=existing_disks,
+        )
         logger.info(f"Block device available at {disk_path}")
         yield disk_path
     finally:
@@ -365,9 +371,15 @@ def second_block_device(juju_vm: jubilant.Juju, deployed_microceph) -> Iterator[
     model_name = juju_vm.status().model.name
     vol_name = f"osd-cfg-test2-{model_name}"
 
+    existing_disks = set(lxd.list_disks(juju_vm, unit_name))
     lxd.create_and_attach_volume(pool, vol_name, inst_id, size="4GB")
     try:
-        disk_path = lxd.wait_for_disk(juju_vm, unit_name, size_pattern="4G|3.7G|3.8G|3.9G")
+        disk_path = lxd.wait_for_disk(
+            juju_vm,
+            unit_name,
+            size_pattern="4G|3.7G|3.8G|3.9G",
+            existing_disks=existing_disks,
+        )
         logger.info(f"Second block device available at {disk_path}")
         yield disk_path
     finally:

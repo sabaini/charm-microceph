@@ -16,8 +16,10 @@
 
 import json
 import logging
+import re
 import subprocess
 import time
+from collections.abc import Collection
 
 import jubilant
 
@@ -69,18 +71,47 @@ def cleanup_volume(pool: str, vol_name: str, instance_id: str) -> None:
     subprocess.run(["lxc", "storage", "volume", "delete", pool, vol_name], check=False)
 
 
-def wait_for_disk(juju: jubilant.Juju, unit_name: str, size_pattern: str = "1G|953.7M") -> str:
-    """Wait for a disk matching the size pattern to appear in the unit."""
+def list_disks(juju: jubilant.Juju, unit_name: str) -> dict[str, str]:
+    """Return visible block disks keyed by in-guest path."""
+    output = juju.ssh(unit_name, "lsblk", "-d", "-J", "-o", "PATH,SIZE,TYPE")
+    blockdevices = json.loads(output).get("blockdevices", [])
+    return {
+        device["path"]: device["size"]
+        for device in blockdevices
+        if device.get("type") == "disk" and device.get("path") and device.get("size")
+    }
+
+
+def wait_for_disk(
+    juju: jubilant.Juju,
+    unit_name: str,
+    size_pattern: str = "1G|953.7M",
+    existing_disks: Collection[str] | None = None,
+) -> str:
+    """Wait for a newly attached disk matching the size pattern to appear in the unit."""
     logger.info("Waiting for disk to appear")
+    size_matcher = re.compile(rf"^(?:{size_pattern})$")
+    known_disks = set(existing_disks or ())
+    last_seen: dict[str, str] = {}
+
     for _ in range(30):
-        # Look for disk with specific size
-        cmd = f"lsblk -d -o NAME,SIZE,TYPE | grep -E '{size_pattern}' | grep 'disk' | awk '{{print \"/dev/\" $1}}' | head -n1"
         try:
-            disk_path = juju.ssh(unit_name, cmd).strip()
-            if disk_path:
-                return disk_path
+            disks = list_disks(juju, unit_name)
+            last_seen = disks
+            candidates = {
+                path: size
+                for path, size in disks.items()
+                if path not in known_disks and size_matcher.fullmatch(size)
+            }
+            if len(candidates) == 1:
+                return sorted(candidates)[0]
+            if candidates:
+                logger.info("Found multiple matching new disks: %s", sorted(candidates))
         except Exception as e:
-            logger.warning(f"SSH failed: {e}")
+            logger.warning("SSH failed: %s", e)
         time.sleep(5)
 
-    raise TimeoutError("Attached disk not found in VM")
+    raise TimeoutError(
+        f"Attached disk not found in VM; size_pattern={size_pattern!r}, "
+        f"existing_disks={sorted(known_disks)}, visible_disks={last_seen}"
+    )
