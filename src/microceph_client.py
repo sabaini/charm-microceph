@@ -192,7 +192,7 @@ class ClusterService(BaseService):
     def list_members(self) -> List[dict]:
         """List all cluster members."""
         members = self._get("/1.0/cluster")
-        return members.get("metadata")
+        return members.get("metadata") or []
 
     def list_services(self) -> List[dict]:
         """List all services."""

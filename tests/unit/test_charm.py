@@ -15,7 +15,7 @@
 """Tests for Microceph charm."""
 
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from unittest.mock import MagicMock, PropertyMock, call, mock_open, patch
 
 import ops_sunbeam.test_utils as test_utils
@@ -80,6 +80,25 @@ class TestCharm(testbase.TestBaseCharm):
                 remove.assert_called_once_with("host-a", is_force=True)
 
         assert cluster_member_count.call_count == len(benign_errors)
+        is_cluster_member.assert_not_called()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "is_cluster_member")
+    @patch.object(microceph, "cluster_member_count", return_value=2)
+    def test_stop_ignores_benign_timeout_expired_with_bytes_stderr(
+        self, cluster_member_count, is_cluster_member, _gethostname
+    ):
+        """Stop hook should decode TimeoutExpired stderr before matching benign errors."""
+        error = TimeoutExpired(
+            ["microceph", "cluster", "remove"],
+            900,
+            stderr=b'Error: cluster member "host-a" not found',
+        )
+        with patch.object(microceph, "remove_cluster_member", side_effect=error) as remove:
+            self.harness.charm._on_stop(MagicMock())
+
+        cluster_member_count.assert_called_once_with()
+        remove.assert_called_once_with("host-a", is_force=True)
         is_cluster_member.assert_not_called()
 
     @patch("charm.gethostname", return_value="host-a")

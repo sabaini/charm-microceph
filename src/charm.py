@@ -26,7 +26,7 @@ import os
 import subprocess
 from pathlib import Path
 from socket import gethostname
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from typing import List
 
 import netifaces
@@ -124,9 +124,16 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         self.channel = self.model.config.get("snap-channel")
 
-    def _is_benign_cluster_remove_error(self, error: CalledProcessError) -> bool:
+    def _is_benign_cluster_remove_error(
+        self, error: CalledProcessError | TimeoutExpired
+    ) -> bool:
         """Return True if a cluster-remove failure is safe to ignore during teardown."""
         stderr = error.stderr or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        else:
+            stderr = str(stderr)
+
         if "Cannot leave a cluster with 1 members" in stderr:
             return True
 
@@ -150,7 +157,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         try:
             microceph.remove_cluster_member(hostname, is_force=True)
-        except CalledProcessError as e:
+        except (CalledProcessError, TimeoutExpired) as e:
             if self._is_benign_cluster_remove_error(e):
                 logger.info("Ignoring benign cluster removal error during stop: %s", e.stderr)
                 return

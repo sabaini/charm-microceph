@@ -110,7 +110,7 @@ def cos_agent_departed_cb(event):
 def cluster_members() -> list[str]:
     """Return the hostnames of MicroCeph cluster members."""
     client = Client.from_socket()
-    members = client.cluster.list_members() or []
+    members = client.cluster.list_members()
     return [member["name"] for member in members if member.get("name")]
 
 
