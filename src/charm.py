@@ -124,9 +124,7 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
 
         self.channel = self.model.config.get("snap-channel")
 
-    def _is_benign_cluster_remove_error(
-        self, error: CalledProcessError | TimeoutExpired
-    ) -> bool:
+    def _is_benign_cluster_remove_error(self, error: CalledProcessError | TimeoutExpired) -> bool:
         """Return True if a cluster-remove failure is safe to ignore during teardown."""
         stderr = error.stderr or ""
         if isinstance(stderr, bytes):
