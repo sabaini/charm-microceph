@@ -204,6 +204,23 @@ class TestJoinNodeToCluster(unittest.TestCase):
         )
 
     @patch.object(microceph, "join_cluster")
+    def test_join_skipped_when_already_joined(self, mock_join):
+        """A unit that already joined must not re-issue the join on retry.
+
+        After ``microceph cluster join`` returns the daemon may not be ready
+        yet, so ``configure_app_non_leader`` defers and re-runs the event.
+        ``join_node_to_cluster`` must short-circuit on the second pass so the
+        (single-use) join token is never consumed twice.
+        """
+        app_data = {"microceph/1.join_token": "test-token"}
+        cn = self._make_cluster_nodes(app_data=app_data)
+        cn.charm.peers.interface.state.joined = True
+
+        cn.join_node_to_cluster(self._make_event())
+
+        mock_join.assert_not_called()
+
+    @patch.object(microceph, "join_cluster")
     def test_join_suppresses_az_when_cluster_uses_az_absent(self, mock_join):
         """AZ is cleared before calling join_cluster when cluster_uses_az is absent."""
         app_data = {"microceph/1.join_token": "test-token"}
