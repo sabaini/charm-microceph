@@ -19,6 +19,7 @@ from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from unittest.mock import MagicMock, PropertyMock, call, mock_open, patch
 
+import ops_sunbeam.guard as sunbeam_guard
 import ops_sunbeam.test_utils as test_utils
 from charms.ceph_mon.v0 import ceph_cos_agent
 from unit import testbase
@@ -46,6 +47,107 @@ class TestCharm(testbase.TestBaseCharm):
         )
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+
+    @patch.object(microceph, "is_ready")
+    @patch.object(charm.MicroCephCharm, "handle_config_rgw_service")
+    def test_non_leader_waits_until_daemon_ready(self, rgw_handler, is_ready):
+        """Reproduce #80: a joined non-leader must not go active before ready.
+
+        ``microceph cluster join`` returns as soon as dqlite membership is
+        recorded, before the local Ceph services are bootstrapped.  The unit
+        must therefore stay waiting (and defer) until ``microceph.is_ready()``
+        is True, rather than proceeding to post-join work that marks it active.
+        """
+        rel_id = self.add_complete_peer_relation(self.harness)
+        # Leader has announced readiness and this unit has run configure_unit.
+        self.harness.update_relation_data(
+            rel_id, self.harness.charm.app.name, {"leader_ready": "true"}
+        )
+        self.harness.charm._state.unit_bootstrapped = True
+        # The join command has completed (membership recorded) ...
+        self.harness.charm.peers.interface.state.joined = True
+        # ... but the local microceph daemon is not bootstrapped yet.
+        is_ready.return_value = False
+
+        event = MagicMock()
+        with self.assertRaises(sunbeam_guard.WaitingExceptionError):
+            self.harness.charm.configure_app_non_leader(event)
+
+        # Must defer so readiness is re-checked on a later hook, and must not
+        # run post-join work that would let the guard set ActiveStatus.
+        event.defer.assert_called_once()
+        rgw_handler.assert_not_called()
+
+    @patch.object(microceph, "is_ready")
+    @patch.object(charm.MicroCephCharm, "handle_config_rgw_service")
+    def test_non_leader_not_joined_waits_for_cluster(self, rgw_handler, is_ready):
+        """Before joining, the unit waits for the cluster.
+
+        The readiness gate must not be reached (it would invoke microceph
+        subcommands) until the unit has actually joined.
+        """
+        rel_id = self.add_complete_peer_relation(self.harness)
+        self.harness.update_relation_data(
+            rel_id, self.harness.charm.app.name, {"leader_ready": "true"}
+        )
+        self.harness.charm._state.unit_bootstrapped = True
+        # join has not happened yet.
+        self.harness.charm.peers.interface.state.joined = False
+
+        event = MagicMock()
+        with self.assertRaises(sunbeam_guard.WaitingExceptionError) as ctx:
+            self.harness.charm.configure_app_non_leader(event)
+
+        self.assertIn("waiting to join cluster", str(ctx.exception))
+        # Readiness gate sits after the join check, so it must not be reached.
+        is_ready.assert_not_called()
+        rgw_handler.assert_not_called()
+        event.defer.assert_not_called()
+
+    @patch.object(microceph, "is_ready")
+    @patch.object(charm.MicroCephCharm, "handle_config_rgw_service")
+    def test_non_leader_proceeds_when_daemon_ready(self, rgw_handler, is_ready):
+        """Once the daemon is ready a joined non-leader proceeds normally."""
+        rel_id = self.add_complete_peer_relation(self.harness)
+        self.harness.update_relation_data(
+            rel_id, self.harness.charm.app.name, {"leader_ready": "true"}
+        )
+        self.harness.charm._state.unit_bootstrapped = True
+        self.harness.charm.peers.interface.state.joined = True
+        is_ready.return_value = True
+
+        event = MagicMock()
+        self.harness.charm.configure_app_non_leader(event)
+
+        event.defer.assert_not_called()
+        rgw_handler.assert_called_once()
+
+    @patch.object(microceph, "is_ready")
+    @patch.object(charm.MicroCephCharm, "handle_config_rgw_service")
+    def test_non_leader_is_ready_error_does_not_go_active(self, rgw_handler, is_ready):
+        """An exception from is_ready must not let the unit reach active.
+
+        ``is_ready`` may raise on unexpected ``microceph status`` failures. The
+        exception must propagate (the guard converts it to a BlockedStatus when
+        called via configure_charm) rather than proceeding to post-join work
+        that would mark the unit active.
+        """
+        rel_id = self.add_complete_peer_relation(self.harness)
+        self.harness.update_relation_data(
+            rel_id, self.harness.charm.app.name, {"leader_ready": "true"}
+        )
+        self.harness.charm._state.unit_bootstrapped = True
+        self.harness.charm.peers.interface.state.joined = True
+        is_ready.side_effect = CalledProcessError(
+            1, ["microceph", "status"], stderr="unexpected boom"
+        )
+
+        event = MagicMock()
+        with self.assertRaises(CalledProcessError):
+            self.harness.charm.configure_app_non_leader(event)
+
+        # Must not run post-join work (which would let the guard set ActiveStatus).
+        rgw_handler.assert_not_called()
 
     @patch("charm.gethostname", return_value="host-a")
     @patch.object(microceph, "remove_cluster_member")

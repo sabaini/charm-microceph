@@ -618,6 +618,20 @@ class MicroCephCharm(sunbeam_charm.OSBaseOperatorCharm):
             # deferral not needed as join token is not yet received.
             raise sunbeam_guard.WaitingExceptionError("waiting to join cluster")
 
+        # Gate active status on the local microceph daemon being fully
+        # bootstrapped. ``microceph cluster join`` returns as soon as the
+        # dqlite membership is recorded, but the Ceph services (mon/mgr/mds)
+        # are started asynchronously and the daemon reports "Daemon not yet
+        # initialized" until they are up. Without this gate the unit is marked
+        # active before it can actually serve requests. The event is deferred
+        # so readiness is re-checked on a later hook; ``join_node_to_cluster``
+        # short-circuits on retry so the join is never re-issued.
+        # https://github.com/canonical/charm-microceph/issues/80
+        if not microceph.is_ready():
+            logger.info("microceph daemon not ready after join, deferring")
+            event.defer()
+            raise sunbeam_guard.WaitingExceptionError("waiting for microceph daemon to bootstrap")
+
         # Proceed with post join activities
         self.handle_config_rgw_service(event)
 
