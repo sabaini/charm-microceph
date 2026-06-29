@@ -16,7 +16,7 @@
 
 import json
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from unittest.mock import MagicMock, PropertyMock, call, mock_open, patch
 
 import ops_sunbeam.test_utils as test_utils
@@ -46,6 +46,207 @@ class TestCharm(testbase.TestBaseCharm):
         )
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "remove_cluster_member")
+    @patch.object(microceph, "cluster_member_count", return_value=1)
+    def test_stop_skips_cluster_remove_for_last_member(
+        self, cluster_member_count, remove_cluster_member, _gethostname
+    ):
+        """Stop hook should not ask MicroCeph to remove the final member."""
+        self.harness.charm._on_stop(MagicMock())
+
+        cluster_member_count.assert_called_once_with()
+        remove_cluster_member.assert_not_called()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "remove_cluster_member")
+    @patch.object(microceph, "cluster_member_count")
+    def test_stop_skips_cluster_remove_on_whole_app_teardown(
+        self, cluster_member_count, remove_cluster_member, _gethostname
+    ):
+        """Full teardown skips cluster removal entirely and exits immediately.
+
+        Draining members during a whole-application removal is not safe: Juju
+        destroys each machine as soon as `stop` returns, leaving dead voters, and
+        coordinating an ordered removal needs the quorum teardown is destroying.
+        """
+        # planned_units() == 0 is how the charm detects whole-app teardown.
+        self.harness.set_planned_units(0)
+
+        # Fire the stop hook handler directly (event payload is irrelevant here).
+        self.harness.charm._on_stop(MagicMock())
+
+        # The is_departing() guard returns before the cluster is touched at all:
+        # neither the size probe nor the member removal runs.
+        remove_cluster_member.assert_not_called()
+        cluster_member_count.assert_not_called()
+
+    def test_configure_charm_inert_when_application_removed(self):
+        """A departing unit must not reconcile (it would hang/err on the dead cluster)."""
+        # Simulate whole-app teardown.
+        self.harness.set_planned_units(0)
+
+        # configure_charm() overrides the base class only to add the guard; patch the
+        # super() implementation so we can assert whether real reconcile would run.
+        with patch("ops_sunbeam.charm.OSBaseOperatorCharm.configure_charm") as super_cfg:
+            self.harness.charm.configure_charm(MagicMock())
+
+        # Guard fired: the base-class reconcile was never delegated to.
+        super_cfg.assert_not_called()
+
+    def test_configure_charm_reconciles_when_not_removed(self):
+        """When the app is not being removed, reconcile proceeds as normal."""
+        # Not a teardown (one unit remains), so the guard must let reconcile through.
+        self.harness.set_planned_units(1)
+
+        with patch("ops_sunbeam.charm.OSBaseOperatorCharm.configure_charm") as super_cfg:
+            self.harness.charm.configure_charm(MagicMock())
+
+        # Guard passed: reconcile is delegated to the base class exactly once.
+        super_cfg.assert_called_once()
+
+    def test_update_status_inert_when_application_removed(self):
+        """update-status must not reconcile a departing app (its cluster lost quorum)."""
+        # Simulate whole-app teardown.
+        self.harness.set_planned_units(0)
+
+        # _clear_resolved_upgrade_blocked_status is the first thing _on_update_status
+        # does after the guard, so patching it lets us detect whether we got past the
+        # guard at all.
+        with patch.object(
+            self.harness.charm, "_clear_resolved_upgrade_blocked_status"
+        ) as clear_status:
+            self.harness.charm._on_update_status(MagicMock())
+
+        # Guard fired: the handler returned before reaching any real work.
+        clear_status.assert_not_called()
+
+    def test_update_status_runs_when_not_removed(self):
+        """When the app is not being removed, update-status proceeds past the guard."""
+        # Not a teardown, so update-status must run normally.
+        self.harness.set_planned_units(1)
+
+        with patch.object(
+            self.harness.charm, "_clear_resolved_upgrade_blocked_status"
+        ) as clear_status:
+            self.harness.charm._on_update_status(MagicMock())
+
+        # Guard passed: the handler proceeded into its body.
+        clear_status.assert_called_once()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "is_cluster_member")
+    @patch.object(microceph, "cluster_member_count", return_value=2)
+    def test_stop_ignores_benign_cluster_remove_errors(
+        self, cluster_member_count, is_cluster_member, _gethostname
+    ):
+        """Stop hook should ignore known idempotent Microcluster remove errors."""
+        benign_errors = (
+            "Error: Cannot leave a cluster with 1 members",
+            'Error: cluster member "host-a" not found',
+            'Error: Cluster member "host-a" with address "10.0.0.10:7443" not found in dqlite or database',
+        )
+
+        for stderr in benign_errors:
+            with self.subTest(stderr=stderr):
+                error = CalledProcessError(1, ["microceph", "cluster", "remove"], stderr=stderr)
+                with patch.object(microceph, "remove_cluster_member", side_effect=error) as remove:
+                    self.harness.charm._on_stop(MagicMock())
+
+                remove.assert_called_once_with("host-a", is_force=True)
+
+        assert cluster_member_count.call_count == len(benign_errors)
+        is_cluster_member.assert_not_called()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "is_cluster_member")
+    @patch.object(microceph, "cluster_member_count", return_value=2)
+    def test_stop_ignores_benign_timeout_expired_with_bytes_stderr(
+        self, cluster_member_count, is_cluster_member, _gethostname
+    ):
+        """Stop hook should decode TimeoutExpired stderr before matching benign errors."""
+        error = TimeoutExpired(
+            ["microceph", "cluster", "remove"],
+            900,
+            stderr=b'Error: cluster member "host-a" not found',
+        )
+        with patch.object(microceph, "remove_cluster_member", side_effect=error) as remove:
+            self.harness.charm._on_stop(MagicMock())
+
+        cluster_member_count.assert_called_once_with()
+        remove.assert_called_once_with("host-a", is_force=True)
+        is_cluster_member.assert_not_called()
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "is_cluster_member", return_value=True)
+    @patch.object(microceph, "cluster_member_count", return_value=2)
+    def test_stop_reraises_non_benign_remove_error_when_still_member(
+        self, _cluster_member_count, _is_cluster_member, _gethostname
+    ):
+        """Stop hook should still fail for unexpected errors when node remains a member."""
+        error = CalledProcessError(
+            1,
+            ["microceph", "cluster", "remove"],
+            stderr="Error: unexpected failure",
+        )
+        with patch.object(microceph, "remove_cluster_member", side_effect=error):
+            with self.assertRaises(CalledProcessError):
+                self.harness.charm._on_stop(MagicMock())
+
+    @patch("charm.gethostname", return_value="host-a")
+    @patch.object(microceph, "is_cluster_member", return_value=False)
+    @patch.object(microceph, "remove_cluster_member")
+    @patch.object(microceph, "cluster_member_count", return_value=2)
+    def test_stop_removes_self_on_partial_scale_down(
+        self, _cluster_member_count, remove_cluster_member, _is_cluster_member, _gethostname
+    ):
+        """When the app is not being torn down, a departing unit removes itself."""
+        # planned_units() == 2 -> partial scale-down, NOT whole-app teardown, so the
+        # is_departing() guard does not fire. cluster_member_count() is mocked to 2
+        # (above quorum-of-one), and is_cluster_member -> False so no error is raised.
+        self.harness.set_planned_units(2)
+
+        self.harness.charm._on_stop(MagicMock())
+
+        # The departing unit forcibly removes itself from the surviving cluster.
+        remove_cluster_member.assert_called_once_with("host-a", is_force=True)
+
+    def test_traefik_ready_inert_when_application_removed(self):
+        """handle_traefik_ready must not run for a departing app (it can call the cluster)."""
+        # Simulate whole-app teardown.
+        self.harness.set_planned_units(0)
+
+        # is_leader() is the first thing handle_traefik_ready does after the guard, so a
+        # non-call proves the guard short-circuited before any traefik/cluster work.
+        with patch.object(self.harness.charm.unit, "is_leader") as is_leader:
+            self.harness.charm.handle_traefik_ready(MagicMock())
+
+        is_leader.assert_not_called()
+
+    def test_traefik_ready_runs_when_not_removed(self):
+        """When the app is not being removed, handle_traefik_ready proceeds past the guard."""
+        # Not a teardown, so the guard must let the handler through.
+        self.harness.set_planned_units(1)
+
+        # Return False from is_leader so the handler exits right after the guard without
+        # needing a real traefik relation; the call itself proves the guard passed.
+        with patch.object(self.harness.charm.unit, "is_leader", return_value=False) as is_leader:
+            self.harness.charm.handle_traefik_ready(MagicMock())
+
+        is_leader.assert_called_once()
+
+    def test_remote_departed_inert_when_application_removed(self):
+        """Remote departed cleanup must not run for a departing app (it calls the cluster)."""
+        # Simulate whole-app teardown.
+        self.harness.set_planned_units(0)
+
+        # remove_remote_cluster() is the cluster call the departed handler would make;
+        # the guard must short-circuit before reaching it.
+        with patch("microceph_remote.remove_remote_cluster") as remove_remote_cluster:
+            self.harness.charm.remote_provider._on_departed(MagicMock())
+
+        remove_remote_cluster.assert_not_called()
 
     @patch.object(ceph_cos_agent, "CephCOSAgentProvider")
     @patch.object(ceph_cos_agent, "ceph_utils")
