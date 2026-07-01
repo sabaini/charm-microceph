@@ -14,4 +14,4 @@ git+https://github.com/canonical/ceph-charms@f427e7e4a1b7b3d0d2d0f3df3a4537a4b39
 
 # Used for communication with snapd socket
 requests-unixsocket # Apache 2
-urllib3<2 # https://github.com/psf/requests/issues/6432
+urllib3<3 # https://github.com/psf/requests/issues/6432
