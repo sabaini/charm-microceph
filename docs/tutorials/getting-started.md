@@ -57,7 +57,7 @@ $ juju set-model-constraints virt-type=virtual-machine mem=4G root-disk=16G
 ```
 
 
-For further details consult the [Juju documentation on LXD](https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-lxd-cloud-and-juju/#the-lxd-cloud-and-juju)
+For further details consult the [Juju documentation on LXD](https://canonical.com/juju/docs/juju-cli/3.6/reference/cloud/list-of-supported-clouds/lxd/)
 
 
 ## Deploy MicroCeph
