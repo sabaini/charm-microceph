@@ -452,8 +452,34 @@ jobs:
         run: |
           set -eux
 
-          # reduce to only 2 active mons in a 4 node cluster (mons auto-scale to 3 units: 0, 1, 2)
-          juju ssh microceph/2 -- sudo snap stop microceph.mon --disable
+          # Only 3 of the 4 units run a mon (MicroCeph auto-scales to 3), and
+          # placement is not deterministic, so discover mon-hosting units rather
+          # than assuming a fixed unit index (e.g. unit 2 may have no mon).
+          mon_units=()
+          for u in 0 1 2 3 ; do
+            juju ssh microceph/$u -- sudo snap services microceph.mon \
+              | awk '$1=="microceph.mon" && $2=="enabled" && $3=="active"{f=1} END{exit !f}' \
+              && mon_units+=($u)
+          done
+          echo "Mon-hosting units: ${mon_units[*]}"
+
+          # Pick two mon-hosting units besides the control node 0: one to stop
+          # the mon on, and another to reserve for the fail-case test.
+          non_control=()
+          for u in "${mon_units[@]}" ; do [ "$u" != 0 ] && non_control+=($u) ; done
+          if [ "${#non_control[@]}" -lt 2 ] ; then
+            echo "Need at least 2 mon-hosting units besides node 0, got ${#non_control[@]}."
+            juju ssh microceph/0 -- sudo microceph.ceph -s
+            exit 1
+          fi
+          stop_mon_unit=${non_control[0]}
+          fail_mon_unit=${non_control[1]}
+
+          echo "Stopping mon on microceph/$stop_mon_unit; reserving microceph/$fail_mon_unit for the fail-case test."
+          echo "fail_mon_unit=$fail_mon_unit" >> "$GITHUB_ENV"
+
+          # reduce to only 2 active mons by stopping one of the three
+          juju ssh microceph/$stop_mon_unit -- sudo snap stop microceph.mon --disable
 
           # wait for the cluster to report mon quorum warning
           for i in {0..100}; do
@@ -473,19 +499,20 @@ jobs:
         run: |
           set -eux
 
-          echo "Test running enter-maintenance action (fail case)."
+          unit_key="microceph/${fail_mon_unit}"
+          echo "Test running enter-maintenance action (fail case) on $unit_key."
 
-          result=$(juju run microceph/1 enter-maintenance stop-osds=true --format json)
+          result=$(juju run "$unit_key" enter-maintenance stop-osds=true --format json)
           echo $result
 
-          has_errors=$(echo $result | jq '."microceph/1".results.errors != ""')
+          has_errors=$(echo $result | jq --arg u "$unit_key" '.[$u].results.errors != ""')
           if [ "$has_errors" != "true" ] ; then
             echo "Expect enter-maintenance to fail because there are only 2 out of 3 active mons,"
             echo "and entering maintenance on another mon-hosting node will drop active mons below quorum majority."
             exit 1
           fi
 
-          status_failure=$(echo $result | jq '."microceph/1".results.status == "failure"')
+          status_failure=$(echo $result | jq --arg u "$unit_key" '.[$u].results.status == "failure"')
           if [ "$status_failure" != "true" ] ; then
             echo "Expect enter-maintenance to fail with status=failure."
             exit 1
@@ -493,7 +520,7 @@ jobs:
 
           # Verify the error is specifically about insufficient non-OSD services (mon quorum),
           # not a spurious failure from an unrelated check.
-          errors=$(echo $result | jq '."microceph/1".results.errors' -r)
+          errors=$(echo $result | jq --arg u "$unit_key" '.[$u].results.errors' -r)
           if ! echo "$errors" | grep -qi "Insufficient non OSD services" ; then
             echo "Expect error message to mention insufficient non-OSD services, got: $errors"
             exit 1
