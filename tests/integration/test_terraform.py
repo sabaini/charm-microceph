@@ -73,6 +73,26 @@ def _format_tf_map(values: Mapping[str, str]) -> str:
     return "{" + serialized + "}"
 
 
+def _terraform_apply_args(
+    *,
+    units: int,
+    juju_base: str,
+    config: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return Terraform variable arguments for an apply operation."""
+    args = [
+        "-var",
+        f"units={units}",
+        "-var",
+        f"channel={TEST_CHARM_CHANNEL}",
+        "-var",
+        f"base={juju_base}",
+    ]
+    if config:
+        args.extend(["-var", f"config={_format_tf_map(config)}"])
+    return args
+
+
 def _run_terragrunt(
     subcommand: str,
     env: dict[str, str],
@@ -98,10 +118,17 @@ def _run_terragrunt(
 class TerraformController:
     """Wrapper around terragrunt apply/destroy for the tests."""
 
-    def __init__(self, juju: jubilant.Juju, env: dict[str, str], download_dir: Path):
+    def __init__(
+        self,
+        juju: jubilant.Juju,
+        env: dict[str, str],
+        download_dir: Path,
+        juju_base: str,
+    ):
         self._juju = juju
         self._env = env
         self._download_dir = download_dir
+        self._juju_base = juju_base
         self._known_units: set[str] = set()
 
     @property
@@ -110,14 +137,11 @@ class TerraformController:
 
     def apply(self, *, units: int, config: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Apply the microceph Terragrunt plan with optional charm config overrides."""
-        extra_args = [
-            "-var",
-            f"units={units}",
-            "-var",
-            f"channel={TEST_CHARM_CHANNEL}",
-        ]
-        if config:
-            extra_args.extend(["-var", f"config={_format_tf_map(config)}"])
+        extra_args = _terraform_apply_args(
+            units=units,
+            juju_base=self._juju_base,
+            config=config,
+        )
 
         _run_terragrunt(
             "apply",
@@ -164,7 +188,10 @@ class TerraformController:
 
 
 @pytest.fixture(scope="module")
-def terraform_controller(juju: jubilant.Juju) -> TerraformController:
+def terraform_controller(
+    juju: jubilant.Juju,
+    juju_base: str,
+) -> TerraformController:
     """Provide a reusable Terraform controller bound to the temp Juju model."""
     helpers.install_terraform_tooling()
     env = _terraform_env(juju)
@@ -172,7 +199,7 @@ def terraform_controller(juju: jubilant.Juju) -> TerraformController:
     env = env.copy()
     env["TERRAGRUNT_DOWNLOAD"] = str(download_dir)
     _run_terragrunt("init", env, download_dir=download_dir)
-    controller = TerraformController(juju, env, download_dir)
+    controller = TerraformController(juju, env, download_dir, juju_base)
     yield controller
 
 

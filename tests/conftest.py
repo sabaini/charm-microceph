@@ -1,5 +1,7 @@
 """Pytest + jubilant fixtures for testing."""
 
+import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterator
@@ -10,6 +12,24 @@ import pytest
 from tests import helpers
 
 REPO_ROOT = helpers.find_repo_root(Path(__file__).resolve())
+DEFAULT_JUJU_BASE = "ubuntu@24.04"
+JUJU_BASE_PATTERN = re.compile(r"^ubuntu@[0-9]{2}\.[0-9]{2}$")
+
+
+def _juju_base_from_env() -> str:
+    """Return and validate the Juju base requested for integration tests."""
+    juju_base = os.environ.get("JUJU_BASE", DEFAULT_JUJU_BASE)
+    if not JUJU_BASE_PATTERN.fullmatch(juju_base):
+        raise pytest.UsageError(
+            f"Invalid JUJU_BASE {juju_base!r}; expected a value such as ubuntu@24.04"
+        )
+    return juju_base
+
+
+def _artifact_name_for_juju_base(juju_base: str) -> str:
+    """Return the amd64 charm artifact name for a Juju base."""
+    name, channel = juju_base.split("@", maxsplit=1)
+    return f"microceph_{name}-{channel}-amd64.charm"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -43,11 +63,20 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         item.session.shouldstop = "abort_on_fail marker triggered"
 
 
+@pytest.fixture(scope="session")
+def juju_base() -> str:
+    """Return the Juju base used by integration models and deployments."""
+    return _juju_base_from_env()
+
+
 @pytest.fixture(scope="module")
-def juju(request: pytest.FixtureRequest) -> Iterator[jubilant.Juju]:
+def juju(request: pytest.FixtureRequest, juju_base: str) -> Iterator[jubilant.Juju]:
     """Provide a temporary Juju model managed by Jubilant."""
     keep_models = bool(request.config.getoption("--keep-models"))
-    with jubilant.temp_model(keep=keep_models) as juju:
+    with jubilant.temp_model(
+        keep=keep_models,
+        config={"default-base": juju_base},
+    ) as juju:
         juju.wait_timeout = 20 * 60
         yield juju
         if request.session.testsfailed:
@@ -87,10 +116,10 @@ def _build_charm(
 
 
 @pytest.fixture(scope="session")
-def microceph_charm() -> Path:
-    """Return the built MicroCeph charm artifact."""
+def microceph_charm(juju_base: str) -> Path:
+    """Return the built MicroCeph charm artifact for the selected Juju base."""
     return _build_charm(
         REPO_ROOT,
-        artifact_name="microceph_ubuntu-24.04-amd64.charm",
+        artifact_name=_artifact_name_for_juju_base(juju_base),
         rebuild=False,
     )

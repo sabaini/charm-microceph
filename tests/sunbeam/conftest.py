@@ -17,6 +17,27 @@
 import jubilant
 import pytest
 
+from tests.conftest import DEFAULT_JUJU_BASE
+
+
+def _sunbeam_juju_base() -> str:
+    """Return the fixed base for Sunbeam-backed tests, ignoring ``JUJU_BASE``.
+
+    Sunbeam tests attach to a pre-existing model whose base is fixed by the
+    external Sunbeam deployment; they do not create a model, so the base must
+    not follow ``JUJU_BASE`` (which only governs tests that create their own
+    model). The only consumer of ``juju_base`` in this suite is
+    ``microceph_charm``, whose refresh artifact must match the Sunbeam
+    model's base.
+    """
+    return DEFAULT_JUJU_BASE
+
+
+@pytest.fixture(scope="session")
+def juju_base() -> str:
+    """Return the fixed base for Sunbeam-backed tests (ignores ``JUJU_BASE``)."""
+    return _sunbeam_juju_base()
+
 
 @pytest.fixture(scope="session")
 def sunbeam_model_name(request: pytest.FixtureRequest) -> str:

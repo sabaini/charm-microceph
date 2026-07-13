@@ -76,10 +76,14 @@ def juju_vm_constraints() -> tuple[str, ...]:
 def juju_vm(
     request: pytest.FixtureRequest,
     juju_vm_constraints: tuple[str, ...],
+    juju_base: str,
 ) -> Iterator[jubilant.Juju]:
     """Provide a temporary Juju model configured for VM-based tests."""
     keep_models = bool(request.config.getoption("--keep-models"))
-    with jubilant.temp_model(keep=keep_models) as juju:
+    with jubilant.temp_model(
+        keep=keep_models,
+        config={"default-base": juju_base},
+    ) as juju:
         juju.wait_timeout = 60 * 60
         juju.cli("set-model-constraints", *juju_vm_constraints)
         yield juju
