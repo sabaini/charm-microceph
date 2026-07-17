@@ -62,6 +62,10 @@ def test_terraform_apply_uses_selected_base(monkeypatch) -> None:
         "tests.integration.test_terraform.TEST_CHARM_CHANNEL",
         "tentacle/candidate",
     )
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_SNAP_CHANNEL",
+        None,
+    )
 
     args = _terraform_apply_args(units=3, juju_base="ubuntu@26.04")
 
@@ -73,6 +77,84 @@ def test_terraform_apply_uses_selected_base(monkeypatch) -> None:
         "-var",
         "base=ubuntu@26.04",
     ]
+
+
+def test_terraform_apply_omits_snap_channel_when_unset(monkeypatch) -> None:
+    """No config var is emitted when MICROCEPH_TEST_SNAP_CHANNEL is unset.
+
+    The Terraform module's snap-channel config default (tentacle/stable) must
+    apply unchanged in that case.
+    """
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_CHARM_CHANNEL",
+        "tentacle/candidate",
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_SNAP_CHANNEL",
+        None,
+    )
+
+    args = _terraform_apply_args(units=1, juju_base="ubuntu@26.04")
+
+    assert "config=" not in " ".join(args)
+
+
+def test_terraform_apply_overrides_snap_channel_when_set(monkeypatch) -> None:
+    """MICROCEPH_TEST_SNAP_CHANNEL overrides the module's snap-channel default."""
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_CHARM_CHANNEL",
+        "tentacle/candidate",
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_SNAP_CHANNEL",
+        "tentacle/candidate",
+    )
+
+    args = _terraform_apply_args(units=1, juju_base="ubuntu@26.04")
+
+    assert 'config={"snap-channel"="tentacle/candidate"}' in " ".join(args)
+
+
+def test_terraform_apply_merges_snap_channel_with_caller_config(monkeypatch) -> None:
+    """Snap-channel override coexists with per-call config such as enable-rgw."""
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_CHARM_CHANNEL",
+        "tentacle/candidate",
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_SNAP_CHANNEL",
+        "tentacle/candidate",
+    )
+
+    args = _terraform_apply_args(
+        units=4,
+        juju_base="ubuntu@26.04",
+        config={"enable-rgw": "*"},
+    )
+
+    # _format_tf_map serializes keys in sorted order.
+    assert 'config={"enable-rgw"="*","snap-channel"="tentacle/candidate"}' in " ".join(args)
+
+
+def test_terraform_apply_caller_config_overrides_snap_channel(monkeypatch) -> None:
+    """An explicit per-call snap-channel wins over the env-derived default."""
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_CHARM_CHANNEL",
+        "tentacle/candidate",
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_terraform.TEST_SNAP_CHANNEL",
+        "tentacle/candidate",
+    )
+
+    args = _terraform_apply_args(
+        units=1,
+        juju_base="ubuntu@26.04",
+        config={"snap-channel": "reef/stable"},
+    )
+
+    assert 'config={"snap-channel"="reef/stable"}' in " ".join(args)
+    assert "tentacle/candidate" not in " ".join(args).split("config=", 1)[1]
 
 
 def test_sunbeam_juju_base_ignores_env(monkeypatch) -> None:

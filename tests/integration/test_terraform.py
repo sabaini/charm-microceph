@@ -30,6 +30,11 @@ ROOT_DISK_CONSTRAINT = "root-disk=32G"
 # released to the store. The TF module's default still points at tentacle/edge
 # for module consumers; only this integration test overrides it.
 TEST_CHARM_CHANNEL = os.environ.get("MICROCEPH_TEST_CHARM_CHANNEL", "squid/stable")
+# Optionally override the Terraform module's snap-channel config default
+# (tentacle/stable). When unset, the module default is used. Read from the
+# canonical MICROCEPH_TEST_SNAP_CHANNEL name (allowed by tox.ini passenv) so
+# CI can drive the snap channel independently of the charm channel.
+TEST_SNAP_CHANNEL = os.environ.get("MICROCEPH_TEST_SNAP_CHANNEL")
 
 
 @pytest.fixture(scope="module")
@@ -88,8 +93,19 @@ def _terraform_apply_args(
         "-var",
         f"base={juju_base}",
     ]
+    # MICROCEPH_TEST_SNAP_CHANNEL optionally overrides the Terraform module's
+    # snap-channel config default (tentacle/stable). It is passed via the
+    # config -var, which the module validates against its config allowlist and
+    # merge()s over config_defaults. A per-call ``config`` takes precedence so
+    # an explicit override still wins. When both are unset, no config var is
+    # emitted and the module default applies unchanged.
+    effective_config: dict[str, str] = {}
+    if TEST_SNAP_CHANNEL:
+        effective_config["snap-channel"] = TEST_SNAP_CHANNEL
     if config:
-        args.extend(["-var", f"config={_format_tf_map(config)}"])
+        effective_config.update(config)
+    if effective_config:
+        args.extend(["-var", f"config={_format_tf_map(effective_config)}"])
     return args
 
 
