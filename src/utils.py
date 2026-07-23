@@ -98,7 +98,7 @@ def is_departing(app, context: str = "") -> bool:
         return False
 
 
-def _sort_mon_addresses(addrs):
+def _sort_mon_addresses(addrs: list[str]) -> list[str]:
     """Return mon addresses in a stable, deterministic order.
 
     The microceph service API (and the ceph.conf fallback) can report the same
